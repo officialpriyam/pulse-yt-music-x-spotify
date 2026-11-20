@@ -104,7 +104,10 @@ impl Google {
             env_value("PULSE_TOKEN_KEY"),
         );
         let (id, secret, database, key) = match config {
-            (None, None, None, None) if !production && env_value("REDIS_URL").is_none() => return Ok(None),
+            (None, None, None, None) if !production
+                    && env_value("REDIS_URL").is_none()
+                    && env_value("UPSTASH_REDIS_REST_URL").is_none()
+                    && env_value("UPSTASH_REDIS_REST_TOKEN").is_none() => return Ok(None),
             (Some(id), Some(secret), Some(database), Some(key)) => (id, secret, database, key),
             _ => return Err("Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, a Postgres URL and PULSE_TOKEN_KEY together".into()),
         };
