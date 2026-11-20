@@ -601,6 +601,7 @@ pub(super) async fn session(
         "discord_available": app.backend.as_ref().is_some_and(|b| b.discord.is_some()),
         "spotify_available": app.backend.as_ref().is_some_and(|b| b.spotify.is_some()),
         "spotify_connected": false,
+        "youtube_catalog_available": app.youtube_api_key.is_some() && app.backend.is_some(),
         "google_connected": false,
         "discord_linked": false,
         "youtube_connected": false,

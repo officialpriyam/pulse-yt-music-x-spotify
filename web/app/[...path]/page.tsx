@@ -9,7 +9,7 @@ export default async function Page({ params }: { params: Promise<{ path: string[
   const valid =
     (path.length === 1 && sections.has(section)) ||
     (section === "player" && path.length === 2 && collection === "spotify") ||
-    (section === "radio" && path.length === 2 && ["night", "indie", "dance"].includes(collection)) ||
+    (section === "radio" && path.length === 2 && ["night", "indie", "dance", "india", "global"].includes(collection)) ||
     (section === "library" && path.length === 2 && collections.has(collection)) ||
     (section === "library" && path.length === 3 && ["playlists", "youtube"].includes(collection) && /^[\w-]{1,150}$/.test(id));
   if (!valid) notFound();

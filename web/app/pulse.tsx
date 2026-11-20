@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ArrowLeft, ArrowRight, AudioLines, CircleAlert, Disc3, Headphones, Heart, House,
+  ArrowLeft, ArrowRight, ArrowUpRight, AudioLines, CircleAlert, Disc3, Headphones, Heart, House,
   Ellipsis, LibraryBig, ListMusic, LogIn, Music2, Play, Plus, Radio, Search, Settings2, Sparkles, Trash2, X, MonitorPlay,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -11,6 +11,7 @@ import { AccountPage, Settings } from "./account";
 import { PulseAudio, usePulseAudio } from "./audio";
 import { api, audioLicense, describe, featured, playlists, stations, tracks, type Playlist, type Session, type Track, type YoutubePage } from "./catalog";
 import SpotifyPage from "./spotify";
+import { youtubeHome, youtubeMixes, youtubeSearchUrl, youtubeTrackUrl, type PublicCatalog } from "./youtube-catalog";
 
 const navigation = [
   { href: "/", title: "Home", icon: House },
@@ -97,12 +98,16 @@ function usePages<T>(enabled: boolean, path: string, parse: (page: YoutubePage) 
 
 type MusicRows = (items: Track[], remove?: (item: Track) => void) => ReactNode;
 
-function SearchPage({ connected, rows }: { connected: boolean; rows: MusicRows }) {
+function SearchPage({ fullCatalog, publicTracks, rows }: { fullCatalog: boolean; publicTracks: Track[]; rows: MusicRows }) {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const path = submitted ? `youtube/search?${new URLSearchParams({ q: submitted })}` : "";
-  const remote = usePages(connected, path, tracks);
-  const local = submitted ? featured.filter((track) => `${track.title} ${track.artist}`.toLowerCase().includes(submitted.toLowerCase())) : [];
+  const remote = usePages(fullCatalog, path, tracks);
+  const terms = submitted.toLowerCase().split(/\s+/).filter(Boolean);
+  const local = terms.length ? [...youtubeHome, ...publicTracks, ...featured].filter((track) => {
+    const text = `${track.title} ${track.artist}`.toLowerCase();
+    return terms.every((term) => text.includes(term));
+  }) : [];
   const results = [...local, ...remote.items];
   function search(event: FormEvent) { event.preventDefault(); setSubmitted(query.trim()); }
   return <section className="screen">
@@ -112,35 +117,45 @@ function SearchPage({ connected, rows }: { connected: boolean; rows: MusicRows }
         placeholder="Search tracks and artists" onChange={(event) => setQuery(event.target.value)} />
       <button className="primary" type="submit" disabled={!query.trim()}>Search</button>
     </form>
-    {!connected && <p className="hint">Search featured tracks or <Link href="/settings">connect YouTube</Link> to search its catalog.</p>}
+    {!fullCatalog && <p className="hint">Search featured YouTube music and recent releases.</p>}
     {submitted && <h2 className="results-heading">Results for “{submitted}”</h2>}
     <Feedback loading={remote.loading} error={remote.error} retry={remote.retry} />
     {results.length > 0 && rows(results)}
-    {submitted && !remote.loading && !remote.error && !results.length && <p className="hint">No tracks found.</p>}
+    {submitted && !remote.loading && !remote.error && !results.length && <p className="hint">No matching tracks in Pulse.</p>}
+    {submitted && <a className="quiet-button" href={youtubeSearchUrl(submitted)} target="_blank" rel="noreferrer">Search on YouTube Music <ArrowUpRight size={15} /></a>}
     {remote.pageError && <Feedback error={remote.pageError} />}
     {remote.hasNext && <button className="quiet-button" disabled={remote.paging} onClick={remote.next}>Load more</button>}
   </section>;
 }
 
-function NewMusic({ connected, rows }: { connected: boolean; rows: MusicRows }) {
-  const [revision, refresh] = useState(0);
-  const popular = useResource<YoutubePage>(connected ? "youtube/popular" : undefined, revision);
-  const songs = popular.data ? tracks(popular.data) : featured;
+function NewMusic({ fullCatalog, catalog, rows }: {
+  fullCatalog: boolean; catalog: ReturnType<typeof useResource<PublicCatalog>>; rows: MusicRows;
+}) {
+  const popular = useResource<YoutubePage>(fullCatalog ? "youtube/popular" : undefined);
+  const latest = catalog.data?.tracks ?? [];
+  const charts = popular.data ? tracks(popular.data) : [];
   return <section className="screen">
     <h1>New</h1>
-    <div className="section-head"><h2>{popular.data ? "Popular on YouTube" : "Featured music"}</h2>
-      {connected && <button className="quiet-button" onClick={() => refresh((value) => value + 1)}>Refresh</button>}</div>
-    <Feedback loading={popular.loading} error={popular.error} retry={() => refresh((value) => value + 1)} />
-    {songs.length ? rows(songs) : <p className="hint">No chart tracks are available right now.</p>}
+    <div className="section-head"><h2>Latest YouTube releases</h2><a href="https://music.youtube.com/explore" target="_blank" rel="noreferrer">Explore <ArrowUpRight size={15} /></a></div>
+    {catalog.loading && <Feedback loading />}
+    {latest.length ? rows(latest) : !catalog.loading && <p className="hint">Latest releases are temporarily unavailable.</p>}
+    <div className="section-head section"><h2>{charts.length ? "Popular on YouTube" : "Featured on YouTube Music"}</h2></div>
+    {rows(charts.length ? charts : youtubeHome)}
   </section>;
 }
 
-function RadioPage({ station, rows, play }: {
-  station?: string; rows: MusicRows; play: (items: Track[]) => void;
+function RadioPage({ station, rows, play, releases }: {
+  station?: string; rows: MusicRows; play: (items: Track[]) => void; releases: PublicCatalog["tracks"];
 }) {
   const selected = stations.find((item) => item.id === station);
+  const mix = youtubeMixes.find((item) => item.id === station);
   return <section className="screen">
-    {selected ? <>
+    {mix ? <>
+      <Link className="quiet-button back-button" href="/radio"><ArrowLeft size={16} /> All mixes</Link>
+      <h1>{mix.title}</h1><p className="hint">{mix.description}</p>
+      <a className="quiet-button back-button" href={youtubeSearchUrl(mix.title)} target="_blank" rel="noreferrer">Explore mix on YouTube Music <ArrowUpRight size={15} /></a>
+      {rows([...(mix.id === "india" ? youtubeHome.slice(0, 1) : youtubeHome.slice(1)), ...releases.filter((track) => track.region === mix.id)])}
+    </> : selected ? <>
       <Link className="quiet-button back-button" href="/radio"><ArrowLeft size={16} /> All stations</Link>
       <h1>{selected.title}</h1><p className="hint">{selected.description}</p>
       <button className="primary station-play" onClick={() => play(selected.tracks.map((index) => featured[index]))}>
@@ -149,6 +164,12 @@ function RadioPage({ station, rows, play }: {
       {rows(selected.tracks.map((index) => featured[index]))}
     </> : <>
       <h1>Radio</h1>
+      <div className="section-head"><h2>YouTube Music</h2></div>
+      <div className="station-grid">{youtubeMixes.map((item) =>
+        <Link href={`/radio/${item.id}`} key={item.id} className={`station glass station-${item.id}`}>
+          <Radio size={23} /><strong>{item.title}</strong><small>{item.description}</small><ArrowRight size={18} />
+        </Link>)}</div>
+      <div className="section-head section"><h2>Listen in Pulse</h2></div>
       <div className="station-grid">{stations.map((item) =>
         <Link href={`/radio/${item.id}`} key={item.id} className={`station glass station-${item.id}`}>
           <Radio size={23} /><strong>{item.title}</strong><small>{item.description}</small><ArrowRight size={18} />
@@ -290,7 +311,7 @@ function TrackPanel({ track, account, collection, saved, save, add, close }: {
       <button className={`icon-button save ${saved ? "is-saved" : ""}`} aria-label={saved ? "Remove liked track" : "Like track"}
         aria-pressed={saved} onClick={save}><Heart size={22} fill={saved ? "currentColor" : "none"} /></button></div>
     {track.source ? <p className="hint"><a href={track.source} target="_blank" rel="noreferrer">{track.artist}</a> · <a href={audioLicense} target="_blank" rel="noreferrer">CC BY 4.0</a></p>
-      : <a className="quiet-button" href={`https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`} target="_blank" rel="noreferrer">Open in YouTube Music</a>}
+      : <a className="quiet-button" href={youtubeTrackUrl(track.id)} target="_blank" rel="noreferrer">Open in YouTube Music</a>}
     {account?.signed_in && collection.length > 0 && <form className="track-playlist" onSubmit={addTrack}>
       <select aria-label="Select a playlist" name="playlist" required defaultValue=""><option disabled value="">Select playlist</option>
         {collection.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
@@ -319,7 +340,8 @@ export default function Pulse({ children }: { children: ReactNode }) {
   const [cancelled, setCancelled] = useState(false);
   const pending = useRef(new Set<string>());
   const authenticated = account?.signed_in === true;
-  const youtubeConnected = account?.youtube_connected === true && account.google_available;
+  const fullYoutubeCatalog = account?.youtube_catalog_available === true || (account?.youtube_connected === true && account.google_available);
+  const catalog = useResource<PublicCatalog>(!section || ["new", "search", "radio"].includes(section) ? "/api/catalog/youtube" : undefined);
   const favorites = useResource<YoutubePage>(authenticated ? "favorites" : undefined, revision);
   const collection = useResource<Collection>(authenticated ? "library/playlists" : undefined, revision);
   const saved = new Set(favorites.data?.ids ?? []);
@@ -357,12 +379,16 @@ export default function Pulse({ children }: { children: ReactNode }) {
 
   const rows: MusicRows = (items, remove) => <ul className="track-list">{Array.from(new Map(items.map((item) => [item.id, item])).values()).map((item) =>
     <li className="track-row" key={item.id}>
-      <button className="track-open" onClick={() => item.audio ? audio.start(item, items) : setCurrent(item)}>
-        <Cover src={item.artwork} className={item.audio ? item.id : ""} />
+      {item.audio ? <button className="track-open" onClick={() => audio.start(item, items)}>
+        <Cover src={item.artwork} className={item.id} />
         <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span>
-        {item.audio && <Play className="row-play" size={15} fill="currentColor" aria-hidden />}
-      </button>
-      {item.audio && <button className="icon-button" aria-label={`Details for ${item.title}`} onClick={() => setCurrent(item)}><Ellipsis size={19} /></button>}
+        <Play className="row-play" size={15} fill="currentColor" aria-hidden />
+      </button> : <a className="track-open" href={youtubeTrackUrl(item.id)} target="_blank" rel="noreferrer">
+        <Cover src={item.artwork} />
+        <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span>
+        <ArrowUpRight className="row-play" size={16} aria-hidden />
+      </a>}
+      <button className="icon-button" aria-label={`Details for ${item.title}`} onClick={() => setCurrent(item)}><Ellipsis size={19} /></button>
       <button className={`icon-button ${saved.has(item.id) ? "is-saved" : ""}`} aria-label={`Like ${item.title}`} aria-pressed={saved.has(item.id)}
         disabled={favorites.loading} onClick={() => toggleSave(item)}><Heart size={18} fill={saved.has(item.id) ? "currentColor" : "none"} /></button>
       {remove && <button className="icon-button" aria-label={`Remove ${item.title} from playlist`} onClick={() => remove(item)}><X size={17} /></button>}
@@ -379,28 +405,37 @@ export default function Pulse({ children }: { children: ReactNode }) {
   switch (section) {
     case undefined:
       page = <>
-        <section className="hero audio-hero">
-          <div className="hero-art" aria-hidden="true" />
+        <section className="hero youtube-hero">
+          <div className="hero-art" aria-hidden="true" style={{ backgroundImage: `url("${youtubeHome[0].artwork}")` }} />
           <div className="hero-copy">
-            <p className="kicker"><AudioLines size={17} /> Pulse radio</p><h1>After Hours</h1>
-            <p>Space jazz and mellow instrumentals.</p>
+            <p className="kicker"><AudioLines size={17} /> YouTube Music</p><h1>Find your next song</h1>
             <div className="hero-actions">
-              <button className="primary" onClick={() => playMix(stations[0].tracks.map((index) => featured[index]))}><Play size={17} fill="currentColor" /> Play mix</button>
-              <Link className="quiet-button" href="/radio/night">View tracks</Link>
+              <Link className="primary" href="/search"><Search size={17} /> Search music</Link>
+              <Link className="quiet-button" href="/new">New releases</Link>
             </div>
           </div>
         </section>
         <section className="section">
-          <div className="section-head"><h2>On rotation</h2><Link href="/new">Browse music <ArrowRight size={15} /></Link></div>
-          <div className="album-grid">{featured.slice(0, 4).map((item) =>
-            <button className="album-card" key={item.id} onClick={() => audio.start(item, featured)}><Cover src={item.artwork} className={item.id} /><strong>{item.title}</strong><small>{item.artist}</small></button>)}</div>
+          <div className="section-head"><h2>Featured on YouTube Music</h2><Link href="/radio">Browse mixes <ArrowRight size={15} /></Link></div>
+          <div className="album-grid">{youtubeHome.slice(0, 4).map((item) =>
+            <a className="album-card" key={item.id} href={youtubeTrackUrl(item.id)} target="_blank" rel="noreferrer">
+              <Cover src={item.artwork} /><strong>{item.title}</strong><small>{item.artist}</small>
+            </a>)}</div>
         </section>
-        <section className="section"><div className="section-head"><h2>Tracks</h2></div>{rows(featured)}</section>
+        <section className="section">{rows(youtubeHome.slice(4))}</section>
+        {!!catalog.data?.tracks.length && <section className="section">
+          <div className="section-head"><h2>Latest releases</h2><Link href="/new">See all <ArrowRight size={15} /></Link></div>
+          {rows(catalog.data.tracks.slice(0, 5))}
+        </section>}
+        <section className="section">
+          <div className="section-head"><h2>Listen in Pulse</h2><button className="primary" onClick={() => playMix(featured)}><Play size={17} fill="currentColor" /> Play mix</button></div>
+          {rows(featured)}
+        </section>
       </>;
       break;
-    case "new": if (!mode) page = <NewMusic connected={youtubeConnected} rows={rows} />; break;
-    case "radio": if (!id && (!mode || stations.some((station) => station.id === mode))) page = <RadioPage station={mode} rows={rows} play={playMix} />; break;
-    case "search": if (!mode) page = <SearchPage connected={youtubeConnected} rows={rows} />; break;
+    case "new": if (!mode) page = <NewMusic fullCatalog={fullYoutubeCatalog} catalog={catalog} rows={rows} />; break;
+    case "radio": if (!id && (!mode || [...stations, ...youtubeMixes].some((station) => station.id === mode))) page = <RadioPage station={mode} rows={rows} play={playMix} releases={catalog.data?.tracks ?? []} />; break;
+    case "search": if (!mode) page = <SearchPage fullCatalog={fullYoutubeCatalog} publicTracks={catalog.data?.tracks ?? []} rows={rows} />; break;
     case "library": if ((!mode || ["liked", "playlists", "youtube"].includes(mode)) && (!id || (/^[\w-]{1,150}$/.test(id) && mode !== "liked"))) page = <Library key={pathname} account={account} mode={mode ?? "liked"} id={id}
       favorites={favorites} collection={collection} mutation={mutation} refresh={refresh} dataRevision={revision} rows={rows} />; break;
     case "player":

@@ -8,6 +8,8 @@ Pulse Web is the responsive Next.js client. It includes Home, charts, radio stat
 2. Copy `.env.example` to `.env.local` and set `PULSE_BACKEND_URL` if the API runs on a different origin.
 3. Run `npm ci` and `npm run dev` from this directory. Open http://localhost:3000.
 
+Home, New and Radio display featured tracks and recent public uploads from YouTube artist and label feeds. Tracks open in YouTube Music. Search covers featured tracks and recent uploads by default. Set `YOUTUBE_API_KEY` in the Rust backend environment to enable full public search and charts via YouTube Data API v3. Google OAuth is used for personal YouTube playlists.
+
 Guests can play the bundled, licensed music from Home, Search, Radio or Player. Playback continues while navigating. [Music credits](public/audio/CREDITS.txt). Username and password accounts use Neon and Redis. Google, Discord, YouTube, and Spotify appear as available options once their backend OAuth client is configured. Google and Discord sign-in can create accounts. To add a provider to an existing account, sign in first and use **Settings → Connections**.
 
 ## Vercel

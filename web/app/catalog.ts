@@ -67,7 +67,7 @@ export function playlists(page: YoutubePage): Playlist[] {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path.startsWith("/auth/") ? path : `/api/v1/${path}`, {
+  const response = await fetch(path.startsWith("/auth/") || path === "/api/catalog/youtube" ? path : `/api/v1/${path}`, {
     ...init,
     headers: { "X-Pulse-Request": "1", ...(init?.body ? { "Content-Type": "application/json" } : {}) },
     cache: "no-store",
@@ -91,6 +91,7 @@ export type Session = {
   google_connected: boolean;
   discord_linked: boolean;
   youtube_connected: boolean;
+  youtube_catalog_available?: boolean;
   spotify_connected: boolean;
 };
 

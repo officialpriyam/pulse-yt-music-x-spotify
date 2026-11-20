@@ -228,6 +228,7 @@ impl Backend {
 struct App {
     http: Client,
     backend: Option<Backend>,
+    youtube_api_key: Option<HeaderValue>,
     password_jobs: Arc<Semaphore>,
     inflight: Semaphore,
 }
@@ -532,10 +533,21 @@ async fn youtube(
     fields: &[(&str, &str)],
     page: Option<String>,
 ) -> ApiResult<Json<Value>> {
-    let mut request = http
-        .get(format!("https://www.googleapis.com/youtube/v3/{resource}"))
-        .bearer_auth(token)
-        .query(fields);
+    youtube_request(
+        http.get(format!("https://www.googleapis.com/youtube/v3/{resource}"))
+            .bearer_auth(token),
+        fields,
+        page,
+    )
+    .await
+}
+
+async fn youtube_request(
+    request: reqwest::RequestBuilder,
+    fields: &[(&str, &str)],
+    page: Option<String>,
+) -> ApiResult<Json<Value>> {
+    let mut request = request.query(fields);
     if let Some(page) = page.filter(|page| !page.is_empty()) {
         request = request.query(&[("pageToken", page)]);
     }
@@ -553,21 +565,55 @@ async fn youtube(
     }
 }
 
-async fn popular(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<Json<Value>> {
-    let token = app.access_token(&app.signed_in(&headers).await?).await?;
-    youtube(
-        &app.http,
-        &token,
-        "videos",
-        &[
-            ("part", "snippet"),
-            ("chart", "mostPopular"),
-            ("videoCategoryId", "10"),
-            ("maxResults", "24"),
-        ],
-        None,
+async fn public_youtube(
+    app: &App,
+    resource: &str,
+    fields: &[(&str, &str)],
+    page: Option<String>,
+) -> ApiResult<Json<Value>> {
+    let key = app.youtube_api_key.as_ref().ok_or(CONNECT_YOUTUBE)?;
+    let (label, daily) = if resource == "search" {
+        ("search", 50)
+    } else {
+        ("charts", 200)
+    };
+    // Reserve a finite global budget for unauthenticated traffic across instances.
+    let today = now() / 86_400;
+    let bucket = format!("youtube-public:{label}:{today}");
+    if app
+        .backend()?
+        .limits
+        .check_window(&bucket, daily, 86_400)
+        .await?
+        > 0
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Public YouTube quota reached for today",
+        ));
+    }
+    youtube_request(
+        app.http
+            .get(format!("https://www.googleapis.com/youtube/v3/{resource}"))
+            .header("X-Goog-Api-Key", key.clone()),
+        fields,
+        page,
     )
     .await
+}
+
+async fn popular(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let fields = [
+        ("part", "snippet"),
+        ("chart", "mostPopular"),
+        ("videoCategoryId", "10"),
+        ("maxResults", "24"),
+    ];
+    if app.youtube_api_key.is_some() {
+        return public_youtube(&app, "videos", &fields, None).await;
+    }
+    let token = app.access_token(&app.signed_in(&headers).await?).await?;
+    youtube(&app.http, &token, "videos", &fields, None).await
 }
 
 async fn youtube_liked(
@@ -643,6 +689,16 @@ async fn search(
         ));
     }
     require_web_request(&headers)?;
+    let fields = [
+        ("part", "snippet"),
+        ("type", "video"),
+        ("videoCategoryId", "10"),
+        ("maxResults", "24"),
+        ("q", q),
+    ];
+    if app.youtube_api_key.is_some() {
+        return public_youtube(&app, "search", &fields, page.page_token).await;
+    }
     let session = app.signed_in(&headers).await?;
     let token = app.access_token(&session).await?;
     let client = app.backend()?.pool.get().await.map_err(|_| STORAGE)?;
@@ -663,20 +719,7 @@ async fn search(
         return Err((StatusCode::TOO_MANY_REQUESTS, "Daily search limit reached"));
     }
     drop(client);
-    youtube(
-        &app.http,
-        &token,
-        "search",
-        &[
-            ("part", "snippet"),
-            ("type", "video"),
-            ("videoCategoryId", "10"),
-            ("maxResults", "24"),
-            ("q", q),
-        ],
-        page.page_token,
-    )
-    .await
+    youtube(&app.http, &token, "search", &fields, page.page_token).await
 }
 
 async fn favorites(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<Json<Value>> {
@@ -924,6 +967,11 @@ pub fn router() -> Result<Router, AnyError> {
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
         backend: Backend::from_env()?,
+        youtube_api_key: env_value("YOUTUBE_API_KEY").and_then(|value| {
+            let mut key = HeaderValue::from_str(value.trim()).ok()?;
+            key.set_sensitive(true);
+            Some(key)
+        }),
         password_jobs: Arc::new(Semaphore::new(2)),
         inflight: Semaphore::new(env_limit("PULSE_MAX_INFLIGHT", 32, 1, 256)? as usize),
     });

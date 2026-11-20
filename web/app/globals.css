@@ -384,15 +384,10 @@ details summary { cursor: pointer; color: var(--accent); }
   .connection .quiet-button { padding: 7px 9px; font-size: 12px; }
 }
 /* Audio playback */
-.audio-hero .hero-art {
-  inset: 0;
-  opacity: 1;
-  background:
-    radial-gradient(ellipse at 75% 55%, #77547c 0%, transparent 45%),
-    radial-gradient(ellipse at 98% 15%, #577e65 0%, transparent 56%),
-    repeating-radial-gradient(ellipse at 78% 123%, #ffffff12 0 1px, transparent 2px 15px),
-    #252d2d;
-}
+.youtube-hero .hero-art { background-position: 60% 45%; }
+.track-open[href] { color: var(--ink); text-decoration: none; }
+.station-india { background: radial-gradient(ellipse at 100% 0, #794e49, transparent 72%), #302622; }
+.station-global { background: radial-gradient(ellipse at 100% 0, #556588, transparent 72%), #272839; }
 .hero-actions { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
 .hero-actions .quiet-button { margin: 0; }
 .station-play { margin: 8px 0 12px; }

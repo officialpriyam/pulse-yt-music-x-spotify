@@ -170,16 +170,20 @@ impl Limits {
     }
 
     pub async fn check(&self, bucket: &str, limit: u32) -> ApiResult<u32> {
+        self.check_window(bucket, limit, 60).await
+    }
+
+    pub async fn check_window(&self, bucket: &str, limit: u32, seconds: u32) -> ApiResult<u32> {
         let key = format!("{}:limit:{bucket}", self.namespace);
         match &self.backend {
             RedisBackend::Rest(rest) => {
-                rest.command(json!(["EVAL", LIMIT, 1, key, limit, 60]))
+                rest.command(json!(["EVAL", LIMIT, 1, key, limit, seconds]))
                     .await
             }
             RedisBackend::Tcp(tcp) => Script::new(LIMIT)
                 .key(key)
                 .arg(limit)
-                .arg(60)
+                .arg(seconds)
                 .invoke_async(&mut tcp.connection().await?)
                 .await
                 .map_err(|_| STORAGE),

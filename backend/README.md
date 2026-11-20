@@ -30,6 +30,7 @@ Copy [.env.example](.env.example) to `.env` for local development, or edit the l
 
 | Variable | Value |
 | --- | --- |
+| `YOUTUBE_API_KEY` | Optional Google Cloud key restricted to YouTube Data API v3 for public search and charts. Keep it in the backend project. |
 | `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` | Optional Google web OAuth client |
 | `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` | Optional Discord OAuth2 client |
 | `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` | Optional Spotify OAuth client |
@@ -113,7 +114,7 @@ Schedule `prune` as a maintenance job against the same database. Each run remove
 | `PUT /api/v1/favorites/VIDEO_ID` | Saves a video |
 | `DELETE /api/v1/favorites/VIDEO_ID` | Removes a saved video |
 
-Search, playlists and playlist items accept `page_token` from the previous response's `nextPageToken`. Search and state-changing browser requests send `X-Pulse-Request: 1`. Search is limited to 20 requests per account per UTC day and also uses the Google Cloud project's shared YouTube API quota.
+Search, playlists and playlist items accept `page_token` from the previous response's `nextPageToken`. Search and state-changing browser requests send `X-Pulse-Request: 1`. OAuth search is limited to 20 requests per account per UTC day. With a configured public API key, Pulse reserves up to 50 public search requests and 200 public chart requests per UTC day. Both modes also use the Google Cloud project’s YouTube API quota.
 
 ## Storage and Android
 
