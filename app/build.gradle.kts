@@ -1,3 +1,4 @@
+import java.net.URI
 import java.util.Properties
 
 plugins {
@@ -44,6 +45,16 @@ require(spicyLyricsOrigin.isEmpty() || spicyLyricsOrigin.matches(Regex("https://
     "pulseSpicyLyricsOrigin must be an HTTPS origin"
 }
 
+val pulseBackendUrl = providers.gradleProperty("pulseBackendUrl").orElse("").get().trim().let { value ->
+    if (value.isEmpty()) return@let ""
+    val uri = runCatching { URI(value) }.getOrNull()
+    require(uri != null && uri.scheme == "https" && uri.host != null &&
+        uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
+        uri.rawPath in listOf("", "/") && (uri.port == -1 || uri.port in 1..65535)
+    ) { "pulseBackendUrl must be an HTTPS origin without a path, query, or credentials" }
+    uri.toASCIIString().trimEnd('/')
+}
+
 android {
     namespace = "dev.priyx.pulse"
     compileSdk {
@@ -60,6 +71,7 @@ android {
         versionName = "2.10.4"
         buildConfigField("boolean", "VERBOSE_LOG", "false")
         buildConfigField("boolean", "GLASS_FLAGS", "false")
+        buildConfigField("String", "PULSE_BACKEND_URL", "\"$pulseBackendUrl\"")
         buildConfigField("String", "SPICY_LYRICS_ORIGIN", "\"$spicyLyricsOrigin\"")
 
         // Bungee only for the ABIs that ship; see the splits below.

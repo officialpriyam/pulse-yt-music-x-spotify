@@ -111,6 +111,7 @@ import com.adamglin.phosphoricons.regular.ChatsCircle
 import com.adamglin.phosphoricons.regular.TelegramLogo
 import com.adamglin.phosphoricons.regular.Bug
 import dev.priyx.pulse.R
+import dev.priyx.pulse.diagnostics.BackendHealth
 import dev.priyx.pulse.data.AppLanguages
 import dev.priyx.pulse.backend.BackendId
 import dev.priyx.pulse.data.CrossfadeSteps
@@ -924,6 +925,14 @@ fun SettingsScreen(
         if (shown == SettingsPage.About) item("update") {
             Section(null) {
                 UpdateRow(askToInstall)
+            }
+        }
+
+        if (shown == SettingsPage.About && BuildConfig.PULSE_BACKEND_URL.isNotEmpty()) {
+            item("backend-health") {
+                Section(null) {
+                    BackendHealthRow(app.sharedHttpClient)
+                }
             }
         }
 
@@ -2418,6 +2427,42 @@ private fun ReportRows(name: String?, onSave: (java.io.File) -> Unit) {
             modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp),
         )
     }
+}
+
+@Composable
+private fun BackendHealthRow(client: okhttp3.OkHttpClient) {
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<BackendHealth.Result?>(null) }
+
+    ActionRow(
+        stringResource(if (checking) R.string.backend_health_checking else R.string.backend_health_check),
+        destructive = false,
+    ) {
+        if (!checking) {
+            checking = true
+            result = null
+            scope.launch {
+                try {
+                    result = BackendHealth.check(BuildConfig.PULSE_BACKEND_URL, client)
+                } finally {
+                    checking = false
+                }
+            }
+        }
+    }
+    val message = when (result) {
+        BackendHealth.Result.Ready -> R.string.backend_health_ready
+        BackendHealth.Result.SetupRequired -> R.string.backend_health_setup_required
+        BackendHealth.Result.Unavailable -> R.string.backend_health_unavailable
+        null -> return
+    }
+    Text(
+        stringResource(message),
+        style = MaterialTheme.typography.bodySmall,
+        color = InkDim,
+        modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp),
+    )
 }
 
 @Composable

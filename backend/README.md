@@ -33,7 +33,7 @@ Use separate databases or branches and Redis instances for production and testin
 
 ## Deploy the backend on Vercel
 
-1. Import the same GitHub repository for both Vercel projects. Create the Rust project rooted at **`backend`**. Choose **Other** as the framework preset and keep build and output overrides empty. The Rust runtime uses [vercel.json](vercel.json), the Cargo manifest and the [function entry point](api/vercel.rs). The backend uses Singapore (`sin1`) to stay near the Neon database.
+1. Import the same GitHub repository for both Vercel projects. Create the Rust project rooted at **`backend`**. Choose **Other** as the framework preset and keep build and output overrides empty. The Rust runtime uses [vercel.json](vercel.json), the Cargo manifest and the [function entry point](api/main.rs). The backend uses Singapore (`sin1`) to stay near the Neon database.
 2. In the backend project's Environment Variables, add the Google credentials, pooled Postgres URL, token encryption key, public web origin and your Redis connection settings to **Production**. Set `PULSE_PUBLIC_URL` to the Next.js site's production origin. If you use a Preview domain, configure its origin and OAuth callback separately.
 3. Deploy using Vercel's Git integration, or run `vercel --prod` from the `backend` folder. Open `/healthz` on the deployed backend URL. The JSON should show `"configured":true` and `"status":"ok"`.
 4. Deploy [the web project](../web/README.md) with `PULSE_BACKEND_URL` set to the Rust deployment's origin. Test **Connect Google** from the web site. The Google callback must return to that same site.
@@ -96,4 +96,10 @@ Search, playlists and playlist items accept `page_token` from the previous respo
 
 Postgres stores OAuth state, accounts, sessions and saved video IDs. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned by the maintenance command. The browser holds HTTP-only cookies.
 
-The Android app currently talks directly to its music providers and needs no backend URL. A future Android integration would need a configurable API origin and a mobile login flow if you want to share Pulse liked tracks with the web app. The web integration uses public YouTube APIs for browsing and library management.
+The Android app talks directly to its music providers. To add a readiness check in **Settings → About**, build Android with the public backend origin.
+
+```sh
+./gradlew :app:assembleDev -PpulseBackendUrl=https://YOUR-BACKEND-DOMAIN
+```
+
+The check calls `/healthz` when tapped and reports whether the service and its dependencies are ready. The About row appears on builds configured with a backend URL. Android sign-in and library sync would require a mobile login flow. The web integration uses public YouTube APIs for browsing and library management.
