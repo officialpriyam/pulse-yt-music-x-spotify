@@ -8,7 +8,7 @@ Pulse Web is the responsive Next.js client. It includes Home, charts, radio stat
 2. Copy `.env.example` to `.env.local` and set `PULSE_BACKEND_URL` if the API runs on a different origin.
 3. Run `npm ci` and `npm run dev` from this directory. Open http://localhost:3000.
 
-Guests can browse featured music and radio stations. Username and password accounts use Neon and Redis. Google, Discord, YouTube, and Spotify appear as available options once their backend OAuth client is configured. Google and Discord sign-in can create accounts. To add a provider to an existing account, sign in first and use **Settings → Connections**.
+Guests can play the bundled, licensed music from Home, Search, Radio or Player. Playback continues while navigating. [Music credits](public/audio/CREDITS.txt). Username and password accounts use Neon and Redis. Google, Discord, YouTube, and Spotify appear as available options once their backend OAuth client is configured. Google and Discord sign-in can create accounts. To add a provider to an existing account, sign in first and use **Settings → Connections**.
 
 ## Vercel
 
@@ -19,4 +19,4 @@ Guests can browse featured music and radio stations. Username and password accou
 
 Keep database credentials, Redis credentials, OAuth secrets, and the token encryption key on the backend project. The frontend proxies `/auth/*` and `/api/v1/*`.
 
-The web player uses the official Spotify Web Playback SDK and needs Spotify Premium, protected media support, and access to your Spotify developer app. YouTube catalog and playlist pages display track information without a video player.
+The separate player at `/player/spotify` uses the official Spotify Web Playback SDK and needs Spotify Premium, protected media support, and access to your Spotify developer app. YouTube catalog and playlist pages display track information without a video player.

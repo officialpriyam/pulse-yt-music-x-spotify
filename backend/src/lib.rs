@@ -729,6 +729,16 @@ fn valid_video_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
+fn valid_track_id(id: &str) -> bool {
+    valid_video_id(id)
+        || id.strip_prefix("pulse-").is_some_and(|slug| {
+            (6..=50).contains(&slug.len())
+                && slug
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
+}
+
 async fn set_favorite(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -737,8 +747,8 @@ async fn set_favorite(
     body: Option<Json<FavoriteMetadata>>,
 ) -> ApiResult<StatusCode> {
     require_web_request(&headers)?;
-    if !valid_video_id(&id) {
-        return Err((StatusCode::BAD_REQUEST, "Invalid YouTube video ID"));
+    if !valid_track_id(&id) {
+        return Err((StatusCode::BAD_REQUEST, "Invalid track ID"));
     }
     let session = app.signed_in(&headers).await?;
     let client = app.backend()?.pool.get().await.map_err(|_| STORAGE)?;
@@ -760,6 +770,12 @@ async fn set_favorite(
         .await
         .map_err(|_| STORAGE)?;
         let metadata = body.map(|Json(value)| value);
+        if !valid_video_id(&id) && metadata.is_none() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Track title and artist are required",
+            ));
+        }
         if metadata.as_ref().is_some_and(|value| {
             value.title.trim().is_empty() || value.title.len() > 500 || value.artist.len() > 400
         }) {

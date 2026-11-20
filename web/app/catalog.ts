@@ -1,4 +1,4 @@
-export type Track = { id: string; title: string; artist: string; artwork: string };
+export type Track = { id: string; title: string; artist: string; artwork: string; audio?: string; source?: string };
 export type Playlist = { id: string; title: string; artwork: string; count: number };
 
 type Item = {
@@ -19,18 +19,23 @@ export function artwork(id: string) {
   return `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 }
 
-const demo = [
-  ["dX3k_QDnzHE", "Midnight City", "M83"],
-  ["4NRXx6U8ABQ", "Blinding Lights", "The Weeknd", "hq720"],
-  ["sBzrzS1Ag_g", "The Less I Know the Better", "Tame Impala", "hq720"],
-  ["5NV6Rdv1a3I", "Get Lucky", "Daft Punk", "hq720"],
-  ["bpOSxM0rNPM", "Do I Wanna Know?", "Arctic Monkeys"],
-  ["TUVcZfQe-Kw", "Levitating", "Dua Lipa"],
+const openTracks = [
+  ["space-jazz", "Space Jazz"],
+  ["night-on-docks", "Night on the Docks"],
+  ["local-forecast", "Local Forecast"],
+  ["disco-medusae", "Disco Medusae"],
+  ["c-funk", "C-Funk"],
 ] as const;
 
-export const featured: Track[] = demo.map(([id, title, artist, image]) => ({
-  id, title, artist, artwork: image ? artwork(id).replace("mqdefault", image) : artwork(id),
+export const featured: Track[] = openTracks.map(([slug, title]) => ({
+  id: `pulse-${slug}`,
+  title,
+  artist: "Kevin MacLeod",
+  artwork: "",
+  audio: `/audio/${slug}.mp3`,
+  source: `https://incompetech.com/music/royalty-free/index.html?keywords=${encodeURIComponent(title)}`,
 }));
+export const audioLicense = "https://creativecommons.org/licenses/by/4.0/";
 
 function thumbnail(item: Item) {
   const images = item.snippet?.thumbnails;
@@ -44,6 +49,8 @@ export function tracks(page: YoutubePage): Track[] {
     const id = item.contentDetails?.videoId || item.snippet?.resourceId?.videoId ||
       (typeof item.id === "string" ? item.id : item.id.videoId);
     const title = item.snippet?.title;
+    const builtIn = featured.find((item) => item.id === id);
+    if (builtIn) return [builtIn];
     if (!id || !/^[\w-]{11}$/.test(id) || !title || ["Private video", "Deleted video"].includes(title)) return [];
     return [{
       id, title, artist: item.snippet?.videoOwnerChannelTitle || item.snippet?.channelTitle || "YouTube",
@@ -92,7 +99,7 @@ export function describe(error: unknown) {
 }
 
 export const stations = [
-  { id: "night", title: "After Hours", description: "Synth-pop for the late shift.", tracks: [0, 1, 2, 3] },
-  { id: "indie", title: "Indie Frequency", description: "Guitar-led and a little offbeat.", tracks: [4, 2, 0] },
-  { id: "dance", title: "Dance Floor", description: "Disco, pop and bright hooks.", tracks: [3, 5, 1] },
+  { id: "night", title: "After Hours", description: "Space jazz and mellow instrumentals.", tracks: [0, 1, 2] },
+  { id: "indie", title: "Jazz Lounge", description: "Mellow jazz for a slow afternoon.", tracks: [2, 1, 0] },
+  { id: "dance", title: "Dance Floor", description: "Disco grooves and funk.", tracks: [3, 4] },
 ] as const;

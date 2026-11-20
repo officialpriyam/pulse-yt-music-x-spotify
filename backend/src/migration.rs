@@ -13,6 +13,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
         4,
         include_str!("../migrations/0004_android_browser_auth.sql"),
     ),
+    (
+        5,
+        include_str!("../migrations/0005_pulse_audio_library.sql"),
+    ),
 ];
 
 fn checksum(sql: &str) -> Vec<u8> {

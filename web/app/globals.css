@@ -383,3 +383,51 @@ details summary { cursor: pointer; color: var(--accent); }
   .connection small { font-size: 12px; }
   .connection .quiet-button { padding: 7px 9px; font-size: 12px; }
 }
+/* Audio playback */
+.audio-hero .hero-art {
+  inset: 0;
+  opacity: 1;
+  background:
+    radial-gradient(ellipse at 75% 55%, #77547c 0%, transparent 45%),
+    radial-gradient(ellipse at 98% 15%, #577e65 0%, transparent 56%),
+    repeating-radial-gradient(ellipse at 78% 123%, #ffffff12 0 1px, transparent 2px 15px),
+    #252d2d;
+}
+.hero-actions { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+.hero-actions .quiet-button { margin: 0; }
+.station-play { margin: 8px 0 12px; }
+.row-play { margin-left: auto; flex-shrink: 0; color: var(--accent); }
+.cover.pulse-space-jazz { background: radial-gradient(ellipse at 76% 18%, #796485, #292a42 72%); color: #e4d5ea; }
+.cover.pulse-night-on-docks { background: linear-gradient(145deg, #4b7884, #1e2a37); color: #d2eaef; }
+.cover.pulse-local-forecast { background: linear-gradient(145deg, #647955, #273831); color: #e0edca; }
+.cover.pulse-disco-medusae { background: linear-gradient(145deg, #a46371, #4f2f53); color: #ffdfd8; }
+.cover.pulse-c-funk { background: linear-gradient(145deg, #a17e4e, #4c3b3b); color: #ffe7c2; }
+.album-card .cover > svg { width: 33%; height: 33%; }
+.now-playing { display: flex; gap: 16px; align-items: center; padding: 15px; border-radius: 18px; }
+.now-playing .cover { width: 70px; aspect-ratio: 1; }
+.now-playing p { color: var(--sub); }
+.app-shell.has-audio { padding-bottom: 110px; }
+.audio-bar {
+  z-index: 8; position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); width: min(calc(100% - 32px), 1140px);
+  display: grid; align-items: center; grid-template-columns: minmax(140px, 1.2fr) auto minmax(130px, 2fr) minmax(85px, 0.75fr);
+  gap: 15px; border-radius: 17px; padding: 9px 13px;
+}
+.audio-title { min-width: 0; display: flex; gap: 9px; align-items: center; color: var(--ink); text-decoration: none; }
+.audio-title .cover { width: 44px; height: 44px; }
+.audio-transport, .audio-progress, .audio-volume { display: flex; justify-content: center; align-items: center; gap: 6px; }
+.audio-toggle { min-width: 38px; min-height: 38px; padding: 0; }
+.audio-progress input, .audio-volume input { width: 100%; min-width: 0; margin: 0; accent-color: var(--accent); }
+.audio-progress small { font-variant-numeric: tabular-nums; font-size: 12px; }
+.audio-error { grid-column: 1/-1; color: #ffd9b9; font-size: 13px; }
+@media (max-width: 950px) {
+  .audio-bar { bottom: calc(77px + env(safe-area-inset-bottom)); }
+  .app-shell.has-audio { padding-bottom: calc(165px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 690px) {
+  .audio-bar { width: calc(100% - 22px); grid-template-columns: minmax(0,1fr) auto; gap: 2px 6px; padding: 7px; }
+  .audio-title .cover { height: 35px; width: 35px; }
+  .audio-transport .icon-button { width: 29px; height: 34px; }
+  .audio-progress { grid-column: 1/-1; }
+  .audio-volume { display: none; }
+  .has-audio.with-panel .player-panel { bottom: calc(156px + env(safe-area-inset-bottom)); }
+}

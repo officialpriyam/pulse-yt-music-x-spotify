@@ -158,7 +158,7 @@ pub(super) async fn add(
     Json(input): Json<Track>,
 ) -> ApiResult<StatusCode> {
     require_web_request(&headers)?;
-    if !valid_video_id(&track)
+    if !valid_track_id(&track)
         || input.title.trim().is_empty()
         || input.title.len() > 500
         || input.artist.len() > 400

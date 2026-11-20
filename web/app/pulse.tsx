@@ -4,11 +4,12 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowLeft, ArrowRight, AudioLines, CircleAlert, Disc3, Headphones, Heart, House,
-  LibraryBig, ListMusic, LogIn, Music2, Plus, Radio, Search, Settings2, Sparkles, Trash2, X, MonitorPlay,
+  Ellipsis, LibraryBig, ListMusic, LogIn, Music2, Play, Plus, Radio, Search, Settings2, Sparkles, Trash2, X, MonitorPlay,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AccountPage, Settings } from "./account";
-import { api, describe, featured, playlists, stations, tracks, type Playlist, type Session, type Track, type YoutubePage } from "./catalog";
+import { PulseAudio, usePulseAudio } from "./audio";
+import { api, audioLicense, describe, featured, playlists, stations, tracks, type Playlist, type Session, type Track, type YoutubePage } from "./catalog";
 import SpotifyPage from "./spotify";
 
 const navigation = [
@@ -102,7 +103,7 @@ function SearchPage({ connected, rows }: { connected: boolean; rows: MusicRows }
   const path = submitted ? `youtube/search?${new URLSearchParams({ q: submitted })}` : "";
   const remote = usePages(connected, path, tracks);
   const local = submitted ? featured.filter((track) => `${track.title} ${track.artist}`.toLowerCase().includes(submitted.toLowerCase())) : [];
-  const results = connected ? remote.items : local;
+  const results = [...local, ...remote.items];
   function search(event: FormEvent) { event.preventDefault(); setSubmitted(query.trim()); }
   return <section className="screen">
     <h1>Search</h1>
@@ -134,12 +135,17 @@ function NewMusic({ connected, rows }: { connected: boolean; rows: MusicRows }) 
   </section>;
 }
 
-function RadioPage({ station, rows }: { station?: string; rows: MusicRows }) {
+function RadioPage({ station, rows, play }: {
+  station?: string; rows: MusicRows; play: (items: Track[]) => void;
+}) {
   const selected = stations.find((item) => item.id === station);
   return <section className="screen">
     {selected ? <>
       <Link className="quiet-button back-button" href="/radio"><ArrowLeft size={16} /> All stations</Link>
       <h1>{selected.title}</h1><p className="hint">{selected.description}</p>
+      <button className="primary station-play" onClick={() => play(selected.tracks.map((index) => featured[index]))}>
+        <Play size={16} fill="currentColor" /> Play station
+      </button>
       {rows(selected.tracks.map((index) => featured[index]))}
     </> : <>
       <h1>Radio</h1>
@@ -279,10 +285,12 @@ function TrackPanel({ track, account, collection, saved, save, add, close }: {
   }
   return <aside className="player-panel glass" aria-label="Track details">
     <div className="panel-label"><Disc3 size={18} /><span>Track details</span><button className="icon-button panel-close" onClick={close} aria-label="Close track details"><X size={18} /></button></div>
-    <Cover src={track.artwork} className="current-cover" />
+    <Cover src={track.artwork} className={`current-cover ${track.audio ? track.id : ""}`} />
     <div className="now-title"><div><h2>{track.title}</h2><p>{track.artist}</p></div>
       <button className={`icon-button save ${saved ? "is-saved" : ""}`} aria-label={saved ? "Remove liked track" : "Like track"}
         aria-pressed={saved} onClick={save}><Heart size={22} fill={saved ? "currentColor" : "none"} /></button></div>
+    {track.source ? <p className="hint"><a href={track.source} target="_blank" rel="noreferrer">{track.artist}</a> · <a href={audioLicense} target="_blank" rel="noreferrer">CC BY 4.0</a></p>
+      : <a className="quiet-button" href={`https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`} target="_blank" rel="noreferrer">Open in YouTube Music</a>}
     {account?.signed_in && collection.length > 0 && <form className="track-playlist" onSubmit={addTrack}>
       <select aria-label="Select a playlist" name="playlist" required defaultValue=""><option disabled value="">Select playlist</option>
         {collection.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
@@ -294,9 +302,15 @@ function TrackPanel({ track, account, collection, saved, save, add, close }: {
 }
 
 export default function Pulse({ children }: { children: ReactNode }) {
+  const audio = usePulseAudio();
   const pathname = usePathname();
   const [section, mode, id] = pathname.split("/").filter(Boolean);
   const router = useRouter();
+  const spotifyScreen = section === "player" && mode === "spotify";
+  const audioElement = audio.media;
+  useEffect(() => {
+    if (spotifyScreen) audioElement.current?.pause();
+  }, [audioElement, spotifyScreen]);
   const [account, setAccount] = useState<Session>();
   const [sessionError, setSessionError] = useState("");
   const [notice, setNotice] = useState("");
@@ -343,8 +357,12 @@ export default function Pulse({ children }: { children: ReactNode }) {
 
   const rows: MusicRows = (items, remove) => <ul className="track-list">{Array.from(new Map(items.map((item) => [item.id, item])).values()).map((item) =>
     <li className="track-row" key={item.id}>
-      <button className="track-open" onClick={() => setCurrent(item)}><Cover src={item.artwork} />
-        <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span></button>
+      <button className="track-open" onClick={() => item.audio ? audio.start(item, items) : setCurrent(item)}>
+        <Cover src={item.artwork} className={item.audio ? item.id : ""} />
+        <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span>
+        {item.audio && <Play className="row-play" size={15} fill="currentColor" aria-hidden />}
+      </button>
+      {item.audio && <button className="icon-button" aria-label={`Details for ${item.title}`} onClick={() => setCurrent(item)}><Ellipsis size={19} /></button>}
       <button className={`icon-button ${saved.has(item.id) ? "is-saved" : ""}`} aria-label={`Like ${item.title}`} aria-pressed={saved.has(item.id)}
         disabled={favorites.loading} onClick={() => toggleSave(item)}><Heart size={18} fill={saved.has(item.id) ? "currentColor" : "none"} /></button>
       {remove && <button className="icon-button" aria-label={`Remove ${item.title} from playlist`} onClick={() => remove(item)}><X size={17} /></button>}
@@ -353,33 +371,51 @@ export default function Pulse({ children }: { children: ReactNode }) {
     const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
     return <Link key={href} className={`nav-link ${active ? "selected" : ""}`} aria-current={active ? "page" : undefined} href={href}><Icon size={20} /><span>{title}</span></Link>;
   });
-  const showPanel = current && !["login", "signup", "player", "settings"].includes(section);
+  const showPanel = current && !["login", "signup", "settings"].includes(section) && mode !== "spotify";
+  function playMix(items: Track[]) {
+    if (items.length) audio.start(items[0], items);
+  }
   let page: ReactNode = null;
   switch (section) {
     case undefined:
       page = <>
-        <section className="hero">
-          <div className="hero-art" style={{ backgroundImage: `url("${featured[0].artwork}")` }} />
+        <section className="hero audio-hero">
+          <div className="hero-art" aria-hidden="true" />
           <div className="hero-copy">
             <p className="kicker"><AudioLines size={17} /> Pulse radio</p><h1>After Hours</h1>
-            <p>Synth-pop, late-night indie and a little disco.</p>
-            <Link className="primary" href="/radio/night"><Radio size={17} /> Explore station</Link>
+            <p>Space jazz and mellow instrumentals.</p>
+            <div className="hero-actions">
+              <button className="primary" onClick={() => playMix(stations[0].tracks.map((index) => featured[index]))}><Play size={17} fill="currentColor" /> Play mix</button>
+              <Link className="quiet-button" href="/radio/night">View tracks</Link>
+            </div>
           </div>
         </section>
         <section className="section">
           <div className="section-head"><h2>On rotation</h2><Link href="/new">Browse music <ArrowRight size={15} /></Link></div>
           <div className="album-grid">{featured.slice(0, 4).map((item) =>
-            <button className="album-card" key={item.id} onClick={() => setCurrent(item)}><Cover src={item.artwork} /><strong>{item.title}</strong><small>{item.artist}</small></button>)}</div>
+            <button className="album-card" key={item.id} onClick={() => audio.start(item, featured)}><Cover src={item.artwork} className={item.id} /><strong>{item.title}</strong><small>{item.artist}</small></button>)}</div>
         </section>
         <section className="section"><div className="section-head"><h2>Tracks</h2></div>{rows(featured)}</section>
       </>;
       break;
     case "new": if (!mode) page = <NewMusic connected={youtubeConnected} rows={rows} />; break;
-    case "radio": if (!id && (!mode || stations.some((station) => station.id === mode))) page = <RadioPage station={mode} rows={rows} />; break;
+    case "radio": if (!id && (!mode || stations.some((station) => station.id === mode))) page = <RadioPage station={mode} rows={rows} play={playMix} />; break;
     case "search": if (!mode) page = <SearchPage connected={youtubeConnected} rows={rows} />; break;
     case "library": if ((!mode || ["liked", "playlists", "youtube"].includes(mode)) && (!id || (/^[\w-]{1,150}$/.test(id) && mode !== "liked"))) page = <Library key={pathname} account={account} mode={mode ?? "liked"} id={id}
       favorites={favorites} collection={collection} mutation={mutation} refresh={refresh} dataRevision={revision} rows={rows} />; break;
-    case "player": if (!mode) page = <SpotifyPage account={account} />; break;
+    case "player":
+      if (mode === "spotify" && !id) page = <SpotifyPage account={account} />;
+      else if (!mode) page = <section className="screen">
+        <div className="section-head"><h1>Player</h1><Link href="/player/spotify">Spotify player <ArrowRight size={15} /></Link></div>
+        {audio.track && <div className="now-playing glass">
+          <Cover className={audio.track.id} />
+          <div><h2>{audio.track.title}</h2><p>{audio.track.artist}</p></div>
+        </div>}
+        <div className="section-head section"><h2>Open music</h2><button className="primary" onClick={() => playMix(featured)}><Play size={16} fill="currentColor" /> Play all</button></div>
+        {rows(featured)}
+        <p className="hint">Music by <a href="https://incompetech.com/music/royalty-free/" target="_blank" rel="noreferrer">Kevin MacLeod</a> · <a href={audioLicense} target="_blank" rel="noreferrer">CC BY 4.0</a></p>
+      </section>;
+      break;
     case "login":
     case "signup":
       if (!mode) page = <AccountPage mode={section} account={account} cancelled={cancelled} complete={async () => { await reload(); router.replace("/"); }} />;
@@ -390,7 +426,7 @@ export default function Pulse({ children }: { children: ReactNode }) {
       }} />;
       break;
   }
-  return <div className={`app-shell ${showPanel ? "with-panel" : ""}`}>
+  return <div className={`app-shell ${showPanel ? "with-panel" : ""} ${audio.track && !spotifyScreen ? "has-audio" : ""}`}>
     <a className="skip-link" href="#main">Skip to content</a>
     <aside className="sidebar glass">
       <Link className="brand" href="/" aria-label="Pulse home"><img src="/pulse.png" alt="" /> <span>Pulse</span></Link>
@@ -399,7 +435,7 @@ export default function Pulse({ children }: { children: ReactNode }) {
       <nav aria-label="Collection shortcuts">
         <Link className="nav-link" href="/library/liked"><Heart size={18} /> Liked tracks</Link>
         <Link className="nav-link" href="/library/playlists"><ListMusic size={18} /> Playlists</Link>
-        <Link className="nav-link" href="/player"><Headphones size={18} /> Spotify player</Link>
+        <Link className="nav-link" href="/player"><Headphones size={18} /> Player</Link>
       </nav>
       <Link className="nav-link sidebar-footer" href="/settings"><Settings2 size={18} /> Settings</Link>
     </aside>
@@ -409,7 +445,7 @@ export default function Pulse({ children }: { children: ReactNode }) {
         <Link className="search-shortcut glass" href="/search" aria-label="Search music"><Search size={17} /><span>Search music</span></Link>
         <div className="top-actions">
           <Link className="icon-button glass mobile-settings" aria-label="Settings" href="/settings"><Settings2 size={18} /></Link>
-          <Link className="icon-button glass" aria-label="Spotify player" href="/player"><Headphones size={18} /></Link>
+          <Link className="icon-button glass" aria-label="Player" href="/player"><Headphones size={18} /></Link>
           <Link className="account-button glass" aria-label={authenticated ? "Account settings" : "Sign in"} href={authenticated ? "/settings" : "/login"}>
             {authenticated ? <span className="avatar">{(account.name || "P").charAt(0).toUpperCase()}</span> : <LogIn size={17} />}
             <span>{authenticated ? account.name || "Account" : "Sign in"}</span>
@@ -425,6 +461,7 @@ export default function Pulse({ children }: { children: ReactNode }) {
     {showPanel && <TrackPanel key={current.id} track={current} account={account} collection={collection.data?.items ?? []} saved={saved.has(current.id)}
       save={() => void toggleSave(current)} close={() => setCurrent(undefined)}
       add={(playlist) => mutation(`library/playlists/${playlist}/tracks/${current.id}`, "PUT", { title: current.title, artist: current.artist })} />}
+    <PulseAudio player={audio} visible={!spotifyScreen} />
     <nav className="mobile-nav glass" aria-label="Mobile navigation">{nav}</nav>
   </div>;
 }
