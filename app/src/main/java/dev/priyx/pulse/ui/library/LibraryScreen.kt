@@ -90,7 +90,7 @@ import com.adamglin.phosphoricons.regular.ArrowsDownUp
 import com.adamglin.phosphoricons.regular.ListBullets
 import com.adamglin.phosphoricons.regular.ChartBar
 import com.adamglin.phosphoricons.regular.Plus
-import com.adamglin.phosphoricons.regular.PulsesFour
+import com.adamglin.phosphoricons.regular.SquaresFour
 
 /** How the playlists are arranged. */
 private enum class Layout { GRID, LIST }
@@ -661,7 +661,7 @@ private fun Header(
                     ) {
                         Icon(
                             if (layout == Layout.GRID) PhosphorIcons.Regular.ListBullets
-                            else PhosphorIcons.Regular.PulsesFour,
+                            else PhosphorIcons.Regular.SquaresFour,
                             contentDescription = stringResource(R.string.change_layout),
                             tint = Ink,
                             modifier = Modifier.size(20.dp),

@@ -132,7 +132,7 @@ object LrcLib {
             .header("User-Agent", USER_AGENT)
             .build()
         http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) null else response.body.string()
+            if (!response.isSuccessful) null else response.body?.string()
         }
     }.getOrNull()
 

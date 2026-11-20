@@ -342,7 +342,7 @@ val cargoBuild by tasks.registering(Exec::class) {
         .takeIf { it.canExecute() }?.absolutePath ?: "cargo"
     commandLine(
         listOf(cargo, "ndk") + abiArgs +
-            listOf("-P", "26", "-o", outputDir, "build", "--release"),
+            listOf("-P", "26", "-o", outputDir, "build", "--release", "--locked"),
     )
 
     // Everything is resolved here rather than in a doFirst block: a task action
@@ -365,7 +365,7 @@ val cargoBuild by tasks.registering(Exec::class) {
     // up a Homebrew rust earlier on PATH, which has neither the Android targets
     // nor a new enough rustc, and reports it as "requires rustc 1.88".
     File(System.getProperty("user.home"), ".cargo/bin").takeIf { it.isDirectory }?.let {
-        environment("PATH", "${it.absolutePath}:${System.getenv("PATH")}")
+        environment("PATH", "${it.absolutePath}${File.pathSeparator}${System.getenv("PATH")}")
     }
 }
 

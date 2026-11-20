@@ -195,12 +195,12 @@ import com.adamglin.phosphoricons.fill.MagnifyingGlass
 import com.adamglin.phosphoricons.fill.MusicNotes
 import com.adamglin.phosphoricons.bold.House
 import com.adamglin.phosphoricons.bold.MusicNotes
-import com.adamglin.phosphoricons.bold.PulsesFour
+import com.adamglin.phosphoricons.bold.SquaresFour
 import com.adamglin.phosphoricons.bold.Broadcast
 import com.adamglin.phosphoricons.bold.MagnifyingGlass
-import com.adamglin.phosphoricons.fill.PulsesFour
+import com.adamglin.phosphoricons.fill.SquaresFour
 import com.adamglin.phosphoricons.fill.Broadcast
-import com.adamglin.phosphoricons.regular.PulsesFour
+import com.adamglin.phosphoricons.regular.SquaresFour
 import com.adamglin.phosphoricons.regular.Broadcast
 import com.adamglin.phosphoricons.regular.House
 import com.adamglin.phosphoricons.regular.MagnifyingGlass
@@ -2835,7 +2835,7 @@ fun PulseApp(
                                 }
                                 BarTab(
                                     R.string.tab_new,
-                                    PhosphorIcons.Fill.PulsesFour,
+                                    PhosphorIcons.Fill.SquaresFour,
                                     activeTab == Routes.NEW,
                                     tabAccent,
                                     barInk,
@@ -2978,7 +2978,7 @@ fun PulseApp(
                             },
                             icon = {
                                 Icon(
-                                    PhosphorIcons.Fill.PulsesFour,
+                                    PhosphorIcons.Fill.SquaresFour,
                                     contentDescription = stringResource(R.string.tab_new),
                                     tint = if (activeTab == Routes.NEW) tabAccent else barInk,
                                     modifier = Modifier.size(TabIcon),
@@ -4256,8 +4256,8 @@ private fun BottomBar(
             }
             BottomItem(
                 stringResource(R.string.tab_new),
-                PhosphorIcons.Fill.PulsesFour,
-                PhosphorIcons.Bold.PulsesFour,
+                PhosphorIcons.Fill.SquaresFour,
+                PhosphorIcons.Bold.SquaresFour,
                 routeIndex >= 0 && selected == 1,
             ) { onSelect(Routes.NEW) }
             BottomItem(

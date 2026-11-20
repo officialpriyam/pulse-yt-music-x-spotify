@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import com.adamglin.phosphoricons.fill.PulsesFour
+import com.adamglin.phosphoricons.fill.SquaresFour
 import com.adamglin.phosphoricons.fill.MusicNotes
 import com.adamglin.phosphoricons.fill.Broadcast
 import com.adamglin.phosphoricons.bold.MagnifyingGlass
@@ -479,7 +479,7 @@ private fun GlassPreview(config: GlassEffectConfig, backdrop: Backdrop) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PreviewTab(PhosphorIcons.Fill.House, R.string.home, selected = true, config = barConfig)
-            PreviewTab(PhosphorIcons.Fill.PulsesFour, R.string.tab_new, selected = false, config = barConfig)
+            PreviewTab(PhosphorIcons.Fill.SquaresFour, R.string.tab_new, selected = false, config = barConfig)
             PreviewTab(PhosphorIcons.Fill.Broadcast, R.string.tab_radio, selected = false, config = barConfig)
             PreviewTab(PhosphorIcons.Fill.MusicNotes, R.string.library, selected = false, config = barConfig)
             PreviewTab(PhosphorIcons.Bold.MagnifyingGlass, R.string.search, selected = false, config = barConfig)

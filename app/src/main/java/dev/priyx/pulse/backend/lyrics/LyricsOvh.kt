@@ -62,7 +62,7 @@ object LyricsOvh {
 
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
-            val body = response.body.string()
+            val body = response.body?.string() ?: return null
             val json = JSONObject(body)
             json.optString("lyrics").takeIf { it.isNotBlank() }
         }

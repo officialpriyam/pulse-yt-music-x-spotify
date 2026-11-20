@@ -6202,7 +6202,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .build()
             container.sharedHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
-                val json = org.json.JSONObject(response.body.string())
+                val body = response.body?.string() ?: return@withContext null
+                val json = org.json.JSONObject(body)
                 val name = json.optString("name").takeIf { it.isNotEmpty() } ?: return@withContext null
                 val img = json.optJSONArray("images")?.optJSONObject(0)?.optString("url")
                 val followers = json.optJSONObject("followers")?.optInt("total") ?: 0

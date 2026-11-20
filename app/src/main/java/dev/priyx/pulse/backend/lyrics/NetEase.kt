@@ -61,7 +61,7 @@ object NetEase {
 
         val searchBody = runCatching {
             http.newCall(searchReq).execute().use { resp ->
-                if (resp.isSuccessful) resp.body.string() else null
+                if (resp.isSuccessful) resp.body?.string() else null
             }
         }.getOrNull() ?: return null
 
@@ -111,7 +111,7 @@ object NetEase {
 
         val lyricBody = runCatching {
             http.newCall(lyricReq).execute().use { resp ->
-                if (resp.isSuccessful) resp.body.string() else null
+                if (resp.isSuccessful) resp.body?.string() else null
             }
         }.getOrNull() ?: return null
 
