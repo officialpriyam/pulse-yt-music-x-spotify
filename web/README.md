@@ -1,27 +1,22 @@
 # Pulse Web
 
-The Next.js web version lives in this folder. It includes an Android-inspired glass layout, a guest mix, search, playlists and saved tracks. Google unlocks the signed-in features.
+Pulse Web is the responsive Next.js client. It includes Home, charts, radio stations, Search, liked tracks, Pulse playlists, YouTube playlists, Settings, sign-up, sign-in and a Spotify audio player.
 
 ## Run locally
 
-1. Start the [Rust backend](../backend/README.md) on `127.0.0.1:4000`.
-2. Copy `.env.example` to `.env.local` if the local file is absent.
-3. Run these commands from the `web` folder.
+1. Start the [Rust backend](../backend/README.md) and apply its migrations.
+2. Copy `.env.example` to `.env.local` and set `PULSE_BACKEND_URL` if the API runs on a different origin.
+3. Run `npm ci` and `npm run dev` from this directory. Open http://localhost:3000.
 
-```sh
-npm ci
-npm run dev
-```
+Guests can browse featured music and radio stations. Username and password accounts use Neon and Redis. Google, Discord, YouTube, and Spotify appear as available options once their backend OAuth client is configured. Google and Discord sign-in can create accounts. To add a provider to an existing account, sign in first and use **Settings → Connections**.
 
-Open `http://localhost:3000`. With the backend in guest mode, you can browse the featured mix and search within it. A configured Google and Postgres backend enables full YouTube search, playlists and liked tracks.
+## Vercel
 
-## Deploy on Vercel
+1. Create a second Vercel project for this repository with root directory **web** and framework preset **Next.js**.
+2. Set the project's Production variable `PULSE_BACKEND_URL` to `https://pulse-yt-music-x-spotify.vercel.app` or your Rust API's production origin.
+3. Set `PULSE_PUBLIC_URL` on the **backend project** to the web app's HTTPS origin. Redeploy the backend after saving it. The browser uses the web domain for credentials, OAuth redirects, and cookies.
+4. Deploy the web project. Open `/api/v1/session` on the web domain to verify it returns JSON. Create a Pulse account and make a playlist as a smoke test.
 
-1. Create a second Vercel project rooted at **`web`** with the **Next.js** framework preset.
-2. Add the environment variable `PULSE_BACKEND_URL` with the Rust service's origin, for example `https://your-pulse-api.vercel.app`.
-3. Make sure the backend's `PULSE_PUBLIC_URL` matches the web site's origin and that the web callback is registered in Google Cloud.
-4. Deploy the web project. Check that `/api/v1/session` on the web domain returns JSON, then test **Connect Google** and open **Library**.
+Keep database credentials, Redis credentials, OAuth secrets, and the token encryption key on the backend project. The frontend proxies `/auth/*` and `/api/v1/*`.
 
-The Next.js project rewrites `/auth/*` and `/api/v1/*` to the Rust backend. The browser uses the site's origin for OAuth and cookies. Store Google and database secrets on the backend project only.
-
-The web app is for browsing and managing the library. Playback is available in the Android app.
+The web player uses the official Spotify Web Playback SDK and needs Spotify Premium, protected media support, and access to your Spotify developer app. YouTube catalog and playlist pages display track information without a video player.

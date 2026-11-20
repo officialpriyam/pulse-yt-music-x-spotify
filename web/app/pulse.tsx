@@ -1,335 +1,429 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
-  AudioLines, CircleAlert, Disc3, Heart, House,
-  LibraryBig, ListMusic, LogIn, LogOut, Music2,
-  Search, X,
+  ArrowLeft, ArrowRight, AudioLines, CircleAlert, Disc3, Headphones, Heart, House,
+  LibraryBig, ListMusic, LogIn, Music2, Plus, Radio, Search, Settings2, Sparkles, Trash2, X, MonitorPlay,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, featured, playlists, tracks, type Playlist, type Track, type YoutubePage } from "./catalog";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { AccountPage, Settings } from "./account";
+import { api, describe, featured, playlists, stations, tracks, type Playlist, type Session, type Track, type YoutubePage } from "./catalog";
+import SpotifyPage from "./spotify";
 
-type Screen = "Home" | "Search" | "Library";
-type Session = { google_connected: boolean; name?: string; configured?: boolean };
-type Page = { songs: Track[]; next?: string };
-type Collection = { playlists: Playlist[]; next?: string };
-const navigation = [{ title: "Home", icon: House }, { title: "Search", icon: Search }, { title: "Library", icon: LibraryBig }] as const;
+const navigation = [
+  { href: "/", title: "Home", icon: House },
+  { href: "/new", title: "New", icon: Sparkles },
+  { href: "/radio", title: "Radio", icon: Radio },
+  { href: "/library", title: "Library", icon: LibraryBig },
+  { href: "/search", title: "Search", icon: Search },
+] as const;
 
-function describe(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong. Try again.";
-}
+type PulsePlaylist = Omit<Playlist, "artwork">;
+type Collection = { items: PulsePlaylist[] };
+type PlaylistDetail = YoutubePage & { id: string; title: string };
 
-function Cover({ src, className = "" }: { src: string; className?: string }) {
+function Cover({ src, className = "" }: { src?: string; className?: string }) {
   const [failed, setFailed] = useState("");
-  return <div className={`cover ${className}`}>
-    {src && failed !== src ? <img src={src} alt="" onError={() => setFailed(src)} /> : <Music2 aria-hidden />}
-  </div>;
+  return <span className={`cover ${className}`}>
+    {src && failed !== src ? <img src={src} alt="" loading="lazy" onError={() => setFailed(src)} /> : <Music2 aria-hidden />}
+  </span>;
 }
 
-function TrackRows({ songs, saved, onSelect, onSave }: {
-  songs: Track[];
-  saved: Set<string>;
-  onSelect: (track: Track) => void;
-  onSave: (track: Track) => void;
-}) {
-  return <ul className="track-list">
-    {songs.map((song) => <li className="track-row" key={song.id}>
-      <button className="track-open" onClick={() => onSelect(song)}>
-        <Cover src={song.artwork} />
-        <span className="track-text"><strong>{song.title}</strong><small>{song.artist}</small></span>
-
-      </button>
-      <button type="button" className={`icon-button save ${saved.has(song.id) ? "is-saved" : ""}`}
-        aria-label={saved.has(song.id) ? `Remove ${song.title} from library` : `Save ${song.title}`}
-        aria-pressed={saved.has(song.id)} onClick={() => onSave(song)}>
-        <Heart size={18} fill={saved.has(song.id) ? "currentColor" : "none"} />
-      </button>
-    </li>)}
-  </ul>;
+function useResource<T>(path: string | undefined, revision = 0) {
+  const [result, setResult] = useState<{ path: string; revision: number; data?: T; error?: string }>();
+  useEffect(() => {
+    if (!path) return;
+    const controller = new AbortController();
+    api<T>(path, { signal: controller.signal }).then((data) => {
+      if (!controller.signal.aborted) setResult({ path, revision, data });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setResult({ path, revision, error: describe(error) });
+    });
+    return () => controller.abort();
+  }, [path, revision]);
+  const current = path && result?.path === path && result.revision === revision ? result : undefined;
+  return { data: current?.data, error: current?.error, loading: !!path && !current };
 }
 
-export default function Pulse() {
-  const [screen, setScreen] = useState<Screen>("Home");
-  const [account, setAccount] = useState<Session>();
-  const [accountMenu, setAccountMenu] = useState(false);
-  const [notice, setNotice] = useState("");
+function Feedback({ loading, error, retry }: { loading?: boolean; error?: string; retry?: () => void }) {
+  if (loading) return <p className="hint" role="status">Loading…</p>;
+  if (!error) return null;
+  return <div className="inline-error" role="alert"><CircleAlert size={17} /><span>{error}</span>
+    {retry && <button className="quiet-button" onClick={retry}>Retry</button>}</div>;
+}
+
+function usePages<T>(enabled: boolean, path: string, parse: (page: YoutubePage) => T[]) {
+  const [result, setResult] = useState<{ path: string; items: T[]; next?: string; error?: string }>();
+  const [paging, setPaging] = useState(false);
+  const [pageError, setPageError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!enabled || !path) return;
+    const controller = new AbortController();
+    api<YoutubePage>(path, { signal: controller.signal }).then((page) => {
+      if (!controller.signal.aborted) setResult({ path, items: parse(page), next: page.nextPageToken });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setResult({ path, items: [], error: describe(error) });
+    });
+    return () => { controller.abort(); request.current?.abort(); };
+  }, [enabled, parse, path, retry]);
+  const current = enabled && result?.path === path ? result : undefined;
+  async function next() {
+    if (!current?.next || paging) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPaging(true);
+    setPageError("");
+    try {
+      const params = new URLSearchParams({ page_token: current.next });
+      const page = await api<YoutubePage>(`${path}${path.includes("?") ? "&" : "?"}${params}`, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        setResult({ path, items: [...current.items, ...parse(page)], next: page.nextPageToken });
+      }
+    } catch (error) { if (!controller.signal.aborted) setPageError(describe(error)); }
+    finally { if (request.current === controller) { setPaging(false); request.current = null; } }
+  }
+  return {
+    items: current?.items ?? [],
+    loading: !!path && enabled && !current,
+    error: current?.error,
+    pageError, paging, next, hasNext: !!current?.next,
+    retry: () => { setResult(undefined); setRetry((value) => value + 1); },
+  };
+}
+
+type MusicRows = (items: Track[], remove?: (item: Track) => void) => ReactNode;
+
+function SearchPage({ connected, rows }: { connected: boolean; rows: MusicRows }) {
   const [query, setQuery] = useState("");
-  const [searched, setSearched] = useState("");
-  const [searchPage, setSearchPage] = useState<Page>({ songs: [] });
-  const [collection, setCollection] = useState<Collection>({ playlists: [] });
-  const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist>();
-  const [playlistPage, setPlaylistPage] = useState<Page>({ songs: [] });
-  const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
-  const [saved, setSaved] = useState<Set<string>>(new Set());
-  const [libraryMode, setLibraryMode] = useState<"saved" | "playlists">("saved");
-  const [busy, setBusy] = useState(false);
-  const [current, setCurrent] = useState(featured[0]);
-  const searchInput = useRef<HTMLInputElement | null>(null);
-  const savingTracks = useRef(new Set<string>());
-  const requestVersion = useRef(0);
-  const connected = account?.google_connected === true;
+  const [submitted, setSubmitted] = useState("");
+  const path = submitted ? `youtube/search?${new URLSearchParams({ q: submitted })}` : "";
+  const remote = usePages(connected, path, tracks);
+  const local = submitted ? featured.filter((track) => `${track.title} ${track.artist}`.toLowerCase().includes(submitted.toLowerCase())) : [];
+  const results = connected ? remote.items : local;
+  function search(event: FormEvent) { event.preventDefault(); setSubmitted(query.trim()); }
+  return <section className="screen">
+    <h1>Search</h1>
+    <form className="search-form glass" onSubmit={search}>
+      <Search size={20} /><input aria-label="Search tracks and artists" value={query} maxLength={120}
+        placeholder="Search tracks and artists" onChange={(event) => setQuery(event.target.value)} />
+      <button className="primary" type="submit" disabled={!query.trim()}>Search</button>
+    </form>
+    {!connected && <p className="hint">Search featured tracks or <Link href="/settings">connect YouTube</Link> to search its catalog.</p>}
+    {submitted && <h2 className="results-heading">Results for “{submitted}”</h2>}
+    <Feedback loading={remote.loading} error={remote.error} retry={remote.retry} />
+    {results.length > 0 && rows(results)}
+    {submitted && !remote.loading && !remote.error && !results.length && <p className="hint">No tracks found.</p>}
+    {remote.pageError && <Feedback error={remote.pageError} />}
+    {remote.hasNext && <button className="quiet-button" disabled={remote.paging} onClick={remote.next}>Load more</button>}
+  </section>;
+}
 
+function NewMusic({ connected, rows }: { connected: boolean; rows: MusicRows }) {
+  const [revision, refresh] = useState(0);
+  const popular = useResource<YoutubePage>(connected ? "youtube/popular" : undefined, revision);
+  const songs = popular.data ? tracks(popular.data) : featured;
+  return <section className="screen">
+    <h1>New</h1>
+    <div className="section-head"><h2>{popular.data ? "Popular on YouTube" : "Featured music"}</h2>
+      {connected && <button className="quiet-button" onClick={() => refresh((value) => value + 1)}>Refresh</button>}</div>
+    <Feedback loading={popular.loading} error={popular.error} retry={() => refresh((value) => value + 1)} />
+    {songs.length ? rows(songs) : <p className="hint">No chart tracks are available right now.</p>}
+  </section>;
+}
+
+function RadioPage({ station, rows }: { station?: string; rows: MusicRows }) {
+  const selected = stations.find((item) => item.id === station);
+  return <section className="screen">
+    {selected ? <>
+      <Link className="quiet-button back-button" href="/radio"><ArrowLeft size={16} /> All stations</Link>
+      <h1>{selected.title}</h1><p className="hint">{selected.description}</p>
+      {rows(selected.tracks.map((index) => featured[index]))}
+    </> : <>
+      <h1>Radio</h1>
+      <div className="station-grid">{stations.map((item) =>
+        <Link href={`/radio/${item.id}`} key={item.id} className={`station glass station-${item.id}`}>
+          <Radio size={23} /><strong>{item.title}</strong><small>{item.description}</small><ArrowRight size={18} />
+        </Link>)}</div>
+    </>}
+  </section>;
+}
+
+function PlaylistForm({ label, initial = "", submit }: { label: string; initial?: string; submit: (name: string) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = String(new FormData(event.currentTarget).get("name") ?? "").trim();
+    if (!name || busy) return;
+    setBusy(true);
+    setError("");
+    try { await submit(name); }
+    catch (error) { setError(describe(error)); }
+    finally { setBusy(false); }
+  }
+  return <form className="playlist-form" onSubmit={save}>
+    <input name="name" required maxLength={100} aria-label="Playlist name" placeholder="Playlist name" defaultValue={initial} />
+    <button className="primary" disabled={busy}>{label}</button>
+    {error && <Feedback error={error} />}
+  </form>;
+}
+
+function Library({ account, mode, id, favorites, collection, mutation, refresh, rows, dataRevision }: {
+  account?: Session;
+  mode: string;
+  id?: string;
+  favorites: ReturnType<typeof useResource<YoutubePage>>;
+  collection: ReturnType<typeof useResource<Collection>>;
+  mutation: (path: string, method: string, body?: object) => Promise<void>;
+  refresh: () => void;
+  dataRevision: number;
+  rows: MusicRows;
+}) {
+  const router = useRouter();
+  const signedIn = !!account?.signed_in;
+  const connected = !!account?.youtube_connected;
+  const [revision, setRevision] = useState(0);
+  const detail = useResource<PlaylistDetail>(signedIn && mode === "playlists" && id ? `library/playlists/${id}` : undefined, revision + dataRevision);
+  const allYoutube = usePages(signedIn && connected && mode === "youtube" && !id, "youtube/playlists", playlists);
+  const youtubeItems = usePages(signedIn && connected && mode === "youtube" && !!id, `youtube/playlist-items?playlist_id=${encodeURIComponent(id ?? "")}`, tracks);
+  const [error, setError] = useState("");
+  const [removing, setRemoving] = useState(false);
+  async function change(path: string, method: string, body?: object) {
+    await mutation(path, method, body);
+    setRevision((value) => value + 1);
+  }
+  async function remove() {
+    if (removing || !id || !window.confirm("Delete this Pulse playlist?")) return;
+    setRemoving(true);
+    setError("");
+    try {
+      await mutation(`library/playlists/${id}`, "DELETE");
+      router.push("/library/playlists");
+    } catch (error) { setError(describe(error)); }
+    finally { setRemoving(false); }
+  }
+  const pages = id ? youtubeItems : allYoutube;
+  const ytTitle = allYoutube.items.find((item) => item.id === id)?.title ?? "YouTube playlist";
+  return <section className="screen">
+    <h1>Your library</h1>
+    <nav className="tabs" aria-label="Library collections">
+      {([{ key: "liked", name: "Liked tracks", icon: Heart }, { key: "playlists", name: "Pulse playlists", icon: ListMusic },
+        { key: "youtube", name: "YouTube", icon: MonitorPlay }]).map(({ key, name, icon: Icon }) =>
+        <Link key={key} className={mode === key ? "active" : ""} aria-current={mode === key ? "page" : undefined} href={`/library/${key}`}><Icon size={16} /> {name}</Link>)}
+    </nav>
+    {!signedIn ? <div className="empty-state glass"><LibraryBig size={28} /><h2>Make it yours</h2>
+      <p>Sign in to sync liked tracks and playlists.</p><Link className="primary" href="/login">Sign in</Link></div> : <>
+      {mode === "liked" && <>
+        <Feedback loading={favorites.loading} error={favorites.error} retry={refresh} />
+        {favorites.data && (tracks(favorites.data).length ? rows(tracks(favorites.data)) :
+          <p className="hint">{favorites.data.ids?.length ? "Connect YouTube to load your older liked tracks." : "Tap the heart next to a track to save it here."}</p>)}
+      </>}
+      {mode === "playlists" && !id && <>
+        <PlaylistForm label="Create playlist" submit={async (name) => {
+          const item = await api<PulsePlaylist>("library/playlists", { method: "POST", body: JSON.stringify({ name }) });
+          refresh();
+          router.push(`/library/playlists/${item.id}`);
+        }} />
+        <Feedback loading={collection.loading} error={collection.error} retry={refresh} />
+        {!!collection.data?.items.length && <div className="album-grid section">{collection.data.items.map((item) =>
+          <Link className="album-card" href={`/library/playlists/${item.id}`} key={item.id}>
+            <Cover /><strong>{item.title}</strong><small>{item.count} tracks</small></Link>)}</div>}
+      </>}
+      {mode === "playlists" && id && <>
+        <Link className="quiet-button back-button" href="/library/playlists"><ArrowLeft size={16} /> Pulse playlists</Link>
+        <Feedback loading={detail.loading} error={detail.error || error} retry={() => setRevision((value) => value + 1)} />
+        {detail.data && <>
+          <div className="section-head"><h2>{detail.data.title}</h2>
+            <button type="button" className="icon-button" aria-label="Delete playlist" disabled={removing} onClick={remove}><Trash2 size={17} /></button></div>
+          <details><summary>Rename playlist</summary><PlaylistForm key={detail.data.title} label="Rename" initial={detail.data.title}
+            submit={(name) => change(`library/playlists/${id}`, "PUT", { name })} /></details>
+          {tracks(detail.data).length ? rows(tracks(detail.data), (track) => {
+            void change(`library/playlists/${id}/tracks/${track.id}`, "DELETE").catch((error) => setError(describe(error)));
+          }) : <p className="hint">Open a track and use Add to playlist to put it here.</p>}
+        </>}
+      </>}
+      {mode === "youtube" && (!connected
+        ? <div className="empty-state glass"><MonitorPlay size={29} /><h2>Open your YouTube playlists</h2><p>Connect YouTube in Settings to browse your own playlists.</p>
+          <Link className="primary" href="/settings">Manage connections</Link></div>
+        : <>
+          {id && <><Link className="quiet-button back-button" href="/library/youtube"><ArrowLeft size={16} /> YouTube playlists</Link><h2>{ytTitle}</h2></>}
+          <Feedback loading={pages.loading} error={pages.error} retry={pages.retry} />
+          <Feedback error={pages.pageError} />
+          {id ? rows(youtubeItems.items) : <div className="album-grid section">{allYoutube.items.map((item) =>
+            <Link className="album-card" href={`/library/youtube/${item.id}`} key={item.id}>
+              <Cover src={item.artwork} /><strong>{item.title}</strong><small>{item.count} tracks</small></Link>)}</div>}
+          {!pages.loading && !pages.error && !pages.items.length && <p className="hint">{id ? "No tracks are available in this playlist." : "No YouTube playlists were found."}</p>}
+          {pages.hasNext && <button className="quiet-button" disabled={pages.paging} onClick={pages.next}>Load more</button>}
+        </>)}
+    </>}
+  </section>;
+}
+
+function TrackPanel({ track, account, collection, saved, save, add, close }: {
+  track: Track; account?: Session; collection: PulsePlaylist[]; saved: boolean;
+  save: () => void; add: (id: string) => Promise<void>; close: () => void;
+}) {
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function addTrack(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const id = String(new FormData(event.currentTarget).get("playlist") ?? "");
+    if (!id || busy) return;
+    setBusy(true);
+    try { await add(id); setStatus("Added to playlist."); }
+    catch (error) { setStatus(describe(error)); }
+    finally { setBusy(false); }
+  }
+  return <aside className="player-panel glass" aria-label="Track details">
+    <div className="panel-label"><Disc3 size={18} /><span>Track details</span><button className="icon-button panel-close" onClick={close} aria-label="Close track details"><X size={18} /></button></div>
+    <Cover src={track.artwork} className="current-cover" />
+    <div className="now-title"><div><h2>{track.title}</h2><p>{track.artist}</p></div>
+      <button className={`icon-button save ${saved ? "is-saved" : ""}`} aria-label={saved ? "Remove liked track" : "Like track"}
+        aria-pressed={saved} onClick={save}><Heart size={22} fill={saved ? "currentColor" : "none"} /></button></div>
+    {account?.signed_in && collection.length > 0 && <form className="track-playlist" onSubmit={addTrack}>
+      <select aria-label="Select a playlist" name="playlist" required defaultValue=""><option disabled value="">Select playlist</option>
+        {collection.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
+      <button className="quiet-button" disabled={busy}><Plus size={16} /> Add</button>
+    </form>}
+    {account?.signed_in && collection.length === 0 && <Link className="quiet-button" href="/library/playlists"><Plus size={16} /> Create a playlist</Link>}
+    {status && <p className="hint" role="status">{status}</p>}
+  </aside>;
+}
+
+export default function Pulse({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const [section, mode, id] = pathname.split("/").filter(Boolean);
+  const router = useRouter();
+  const [account, setAccount] = useState<Session>();
+  const [sessionError, setSessionError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [revision, setRevision] = useState(0);
+  const [current, setCurrent] = useState<Track>();
+  const [cancelled, setCancelled] = useState(false);
+  const pending = useRef(new Set<string>());
+  const authenticated = account?.signed_in === true;
+  const youtubeConnected = account?.youtube_connected === true && account.google_available;
+  const favorites = useResource<YoutubePage>(authenticated ? "favorites" : undefined, revision);
+  const collection = useResource<Collection>(authenticated ? "library/playlists" : undefined, revision);
+  const saved = new Set(favorites.data?.ids ?? []);
+  useEffect(() => {
+    setCancelled(new URLSearchParams(window.location.search).get("auth") === "cancelled");
+  }, [pathname]);
   useEffect(() => {
     const controller = new AbortController();
     api<Session>("session", { signal: controller.signal }).then(setAccount).catch((error) => {
-      if (!controller.signal.aborted) setNotice(describe(error));
+      if (!controller.signal.aborted) setSessionError(describe(error));
     });
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    if (!connected) return;
-    const controller = new AbortController();
-    api<YoutubePage>("favorites", { signal: controller.signal }).then((page) => {
-      setFavoriteTracks(tracks(page));
-      setSaved(new Set(page.ids ?? []));
-    }).catch((error) => {
-      if (!controller.signal.aborted) setNotice(describe(error));
-    });
-    return () => controller.abort();
-  }, [connected]);
-
-  useEffect(() => {
-    if (screen === "Search") searchInput.current?.focus();
-  }, [screen]);
-
-  function go(next: Screen) {
-    requestVersion.current += 1;
-    setBusy(false);
-    setNotice("");
-    setScreen(next);
+  async function reload() {
+    setAccount(await api<Session>("session"));
+    setSessionError("");
   }
-
-  function login() {
-    if (account?.configured === false) {
-      setNotice("Google login is unavailable until the Pulse API is configured.");
-      return;
-    }
-    window.location.assign("/auth/google/login");
+  const refresh = () => setRevision((value) => value + 1);
+  async function mutation(path: string, method: string, body?: object) {
+    await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+    refresh();
   }
-
-  async function logout() {
-    try {
-      const response = await fetch("/auth/logout", { method: "POST", headers: { "X-Pulse-Request": "1" } });
-      if (!response.ok) throw new Error("Could not sign out. Try again.");
-      requestVersion.current += 1;
-      setAccount({ google_connected: false, configured: true });
-      setAccountMenu(false);
-      setFavoriteTracks([]);
-      setSaved(new Set());
-      setCollection({ playlists: [] });
-      setLibraryMode("saved");
-      setSelectedPlaylist(undefined);
-      setPlaylistPage({ songs: [] });
-      setSearchPage({ songs: [] });
-      setSearched("");
-      setQuery("");
-      setBusy(false);
-      setNotice("");
-    } catch (error) { setNotice(describe(error)); }
-  }
-
-  async function fetchPage<T>(path: string, apply: (result: T) => void) {
-    const version = ++requestVersion.current;
-    setBusy(true);
+  async function toggleSave(item: Track) {
+    if (!authenticated) { router.push("/login"); return; }
+    if (pending.current.has(item.id) || favorites.loading) return;
+    pending.current.add(item.id);
     setNotice("");
     try {
-      const result = await api<T>(path);
-      if (version === requestVersion.current) apply(result);
-    } catch (error) {
-      if (version === requestVersion.current) setNotice(describe(error));
-    } finally {
-      if (version === requestVersion.current) setBusy(false);
-    }
-  }
-
-  function searchCatalog(event?: FormEvent, next?: string) {
-    event?.preventDefault();
-    const q = (next ? searched : query).trim();
-    if (!q) return;
-    if (!next) {
-      setSearched(q);
-      setSearchPage({ songs: [] });
-    }
-    if (!connected) {
-      setSearchPage({ songs: featured.filter((song) => `${song.title} ${song.artist}`.toLowerCase().includes(q.toLowerCase())) });
-      return;
-    }
-    const params = new URLSearchParams({ q });
-    if (next) params.set("page_token", next);
-    void fetchPage<YoutubePage>(`youtube/search?${params}`, (page) => {
-      setSearchPage((previous) => ({ songs: next ? [...previous.songs, ...tracks(page)] : tracks(page), next: page.nextPageToken }));
-    });
-  }
-
-  function showPlaylists(next?: string) {
-    if (!connected) { login(); return; }
-    setLibraryMode("playlists");
-    setSelectedPlaylist(undefined);
-    const params = next ? `?page_token=${encodeURIComponent(next)}` : "";
-    void fetchPage<YoutubePage>(`youtube/playlists${params}`, (page) => {
-      setCollection((previous) => ({ playlists: next ? [...previous.playlists, ...playlists(page)] : playlists(page), next: page.nextPageToken }));
-    });
-  }
-
-  function showTracks(list: Playlist, next?: string) {
-    setSelectedPlaylist(list);
-    if (!next) setPlaylistPage({ songs: [] });
-    const params = new URLSearchParams({ playlist_id: list.id });
-    if (next) params.set("page_token", next);
-    void fetchPage<YoutubePage>(`youtube/playlist-items?${params}`, (page) => {
-      setPlaylistPage((previous) => ({ songs: next ? [...previous.songs, ...tracks(page)] : tracks(page), next: page.nextPageToken }));
-    });
-  }
-
-  async function save(song: Track) {
-    if (!connected) { login(); return; }
-    if (savingTracks.current.has(song.id)) return;
-    savingTracks.current.add(song.id);
-    const remove = saved.has(song.id);
-    try {
-      await api(`favorites/${song.id}`, { method: remove ? "DELETE" : "PUT" });
-      setSaved((before) => {
-        const updated = new Set(before);
-        if (remove) updated.delete(song.id);
-        else updated.add(song.id);
-        return updated;
-      });
-      setFavoriteTracks((before) => remove ? before.filter((track) => track.id !== song.id) :
-        [song, ...before.filter((track) => track.id !== song.id)]);
+      const removing = saved.has(item.id);
+      await mutation(`favorites/${item.id}`, removing ? "DELETE" : "PUT", removing ? undefined : { title: item.title, artist: item.artist });
     } catch (error) { setNotice(describe(error)); }
-    finally { savingTracks.current.delete(song.id); }
+    finally { pending.current.delete(item.id); }
   }
 
-  const isLibrary = screen === "Library";
-  const activeList = selectedPlaylist ? playlistPage.songs : favoriteTracks;
-  const rendered = (songs: Track[]) => <TrackRows songs={Array.from(new Map(songs.map((song) => [song.id, song])).values())}
-    saved={saved} onSelect={setCurrent} onSave={save} />;
-
-  return <div className="app-shell">
-    <aside className="sidebar glass">
-      <button className="brand" onClick={() => go("Home")} aria-label="Pulse home">
-        <img src="/pulse.png" alt="" /><span>PULSE</span>
-      </button>
-      <nav aria-label="Main navigation">
-        {navigation.map(({ title, icon: Icon }) => <button key={title} className={`nav-link ${screen === title ? "selected" : ""}`}
-          aria-current={screen === title ? "page" : undefined} onClick={() => go(title)}><Icon size={20} /><span>{title}</span></button>)}
-      </nav>
-      <div className="sidebar-label">Your collection</div>
-      <button className="nav-link collection-item" onClick={() => { go("Library"); setLibraryMode("saved"); setSelectedPlaylist(undefined); }}>
-        <span className="collection-icon"><Heart size={16} /></span><span>Liked tracks</span>
-      </button>
-      <button className="nav-link collection-item" onClick={() => { go("Library"); showPlaylists(); }}>
-        <span className="collection-icon tint"><ListMusic size={17} /></span><span>YouTube playlists</span>
-      </button>
-      <div className="sidebar-footer"><AudioLines size={15} /> YouTube Music</div>
-    </aside>
-
-    <main className="content">
-      <header className="topbar">
-        <button className="brand compact-brand" onClick={() => go("Home")} aria-label="Pulse home"><img src="/pulse.png" alt="" /><span>PULSE</span></button>
-        <button className="search-shortcut glass" aria-label="Search music" onClick={() => go("Search")}><Search size={17} /> <span>Search music</span></button>
-        <div className="account">
-          {connected ? <button className="account-button glass" aria-expanded={accountMenu} onClick={() => setAccountMenu(!accountMenu)}>
-            <span className="avatar">{(account?.name || "P").charAt(0).toUpperCase()}</span><span>{account?.name || "Google account"}</span>
-          </button> : <button className="account-button glass" onClick={login}><LogIn size={16} /> <span>Connect Google</span></button>}
-          {connected && accountMenu && <div className="account-menu glass"><button onClick={logout}><LogOut size={17} /> Sign out</button></div>}
-        </div>
-      </header>
-
-      {notice && <div className="notice" role="status"><CircleAlert size={18} /><span>{notice}</span>
-        <button className="icon-button" aria-label="Dismiss message" onClick={() => setNotice("")}><X size={17} /></button></div>}
-
-      {screen === "Home" && <>
+  const rows: MusicRows = (items, remove) => <ul className="track-list">{Array.from(new Map(items.map((item) => [item.id, item])).values()).map((item) =>
+    <li className="track-row" key={item.id}>
+      <button className="track-open" onClick={() => setCurrent(item)}><Cover src={item.artwork} />
+        <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span></button>
+      <button className={`icon-button ${saved.has(item.id) ? "is-saved" : ""}`} aria-label={`Like ${item.title}`} aria-pressed={saved.has(item.id)}
+        disabled={favorites.loading} onClick={() => toggleSave(item)}><Heart size={18} fill={saved.has(item.id) ? "currentColor" : "none"} /></button>
+      {remove && <button className="icon-button" aria-label={`Remove ${item.title} from playlist`} onClick={() => remove(item)}><X size={17} /></button>}
+    </li>)}</ul>;
+  const nav = navigation.map(({ href, title, icon: Icon }) => {
+    const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+    return <Link key={href} className={`nav-link ${active ? "selected" : ""}`} aria-current={active ? "page" : undefined} href={href}><Icon size={20} /><span>{title}</span></Link>;
+  });
+  const showPanel = current && !["login", "signup", "player", "settings"].includes(section);
+  let page: ReactNode = null;
+  switch (section) {
+    case undefined:
+      page = <>
         <section className="hero">
           <div className="hero-art" style={{ backgroundImage: `url("${featured[0].artwork}")` }} />
           <div className="hero-copy">
-            <p className="kicker"><AudioLines size={17} /> Pulse mix</p>
-            <h1>After Hours</h1>
+            <p className="kicker"><AudioLines size={17} /> Pulse radio</p><h1>After Hours</h1>
             <p>Synth-pop, late-night indie and a little disco.</p>
-            <button className="primary" onClick={() => document.getElementById("track-list")?.scrollIntoView({ block: "start" })}><ListMusic size={16} /> Browse tracks</button>
+            <Link className="primary" href="/radio/night"><Radio size={17} /> Explore station</Link>
           </div>
         </section>
-
         <section className="section">
-          <div className="section-head"><h2>On rotation</h2><span>From the Pulse mix</span></div>
-          <div className="album-grid">
-            {featured.slice(0, 4).map((song) => <button className="album-card" key={song.id} onClick={() => setCurrent(song)}>
-              <Cover src={song.artwork} />
-              <strong>{song.title}</strong><small>{song.artist}</small>
-            </button>)}
-          </div>
+          <div className="section-head"><h2>On rotation</h2><Link href="/new">Browse music <ArrowRight size={15} /></Link></div>
+          <div className="album-grid">{featured.slice(0, 4).map((item) =>
+            <button className="album-card" key={item.id} onClick={() => setCurrent(item)}><Cover src={item.artwork} /><strong>{item.title}</strong><small>{item.artist}</small></button>)}</div>
         </section>
-
-        <section className="section tracks-section" id="track-list">
-          <div className="section-head"><h2>Track list</h2></div>
-          {rendered(featured)}
-        </section>
-      </>}
-
-      {screen === "Search" && <section className="screen">
-        <h1>Search</h1>
-        <form className="search-form glass" onSubmit={searchCatalog}>
-          <Search size={21} /><input ref={searchInput} aria-label="Search music" value={query} maxLength={120}
-            onChange={(event) => setQuery(event.target.value)} placeholder="Tracks, artists and music videos" />
-          <button className="primary" type="submit" disabled={busy || !query.trim()}>Search</button>
-        </form>
-        {!connected && <p className="hint">Search the Pulse mix, or <button onClick={login}>connect Google</button> to search YouTube.</p>}
-        {searched && <h2 className="results-heading">Results for “{searched}”</h2>}
-        {searchPage.songs.length > 0 && rendered(searchPage.songs)}
-        {busy && <p className="hint" role="status">Searching…</p>}
-        {!busy && searched && searchPage.songs.length === 0 && !notice && <p className="hint">No tracks found.</p>}
-        {searchPage.next && <button className="quiet-button" disabled={busy} onClick={() => searchCatalog(undefined, searchPage.next)}>Load more</button>}
-      </section>}
-
-      {isLibrary && <section className="screen">
-        <h1>Your library</h1>
-        <div className="tabs">
-          <button className={libraryMode === "saved" ? "active" : ""} onClick={() => {
-            requestVersion.current += 1; setBusy(false); setNotice(""); setLibraryMode("saved"); setSelectedPlaylist(undefined);
-          }}><Heart size={16} /> Liked tracks</button>
-          <button className={libraryMode === "playlists" ? "active" : ""} onClick={() => showPlaylists()}><ListMusic size={18} /> YouTube playlists</button>
-        </div>
-        {!connected && <div className="empty-state glass"><LibraryBig size={30} /><h2>Bring your music with you</h2>
-          <p>Connect Google to open your YouTube playlists and save tracks to Pulse.</p>
-          <button className="primary" onClick={login}><LogIn size={16} /> Connect Google</button></div>}
-        {connected && libraryMode === "saved" && <>
-          {favoriteTracks.length ? rendered(favoriteTracks) : <p className="hint">Tap the heart next to a track to save it here.</p>}
-        </>}
-        {connected && libraryMode === "playlists" && (selectedPlaylist ?
-          <div>
-            <button className="quiet-button back-button" onClick={() => {
-              requestVersion.current += 1; setBusy(false); setSelectedPlaylist(undefined);
-            }}>All playlists</button>
-            <h2>{selectedPlaylist.title}</h2>
-            {activeList.length > 0 && rendered(activeList)}
-            {!busy && activeList.length === 0 && !notice && <p className="hint">No tracks are available in this playlist.</p>}
-            {playlistPage.next && <button className="quiet-button" disabled={busy} onClick={() => showTracks(selectedPlaylist, playlistPage.next)}>Load more</button>}
-          </div> : <>
-            {collection.playlists.length > 0 && <div className="album-grid playlists-grid">
-              {collection.playlists.map((list) => <button key={list.id} className="album-card" onClick={() => showTracks(list)}>
-                <Cover src={list.artwork} /><strong>{list.title}</strong><small>{list.count} videos</small>
-              </button>)}
-            </div>}
-            {!busy && collection.playlists.length === 0 && !notice && <p className="hint">This account has no YouTube playlists.</p>}
-            {collection.next && <button className="quiet-button" disabled={busy} onClick={() => showPlaylists(collection.next)}>Load more</button>}
-          </>)}
-        {busy && <p className="hint" role="status">Loading library…</p>}
-      </section>}
-    </main>
-
-    <aside className="player-panel glass" aria-label="Track details">
-      <div className="panel-label"><Disc3 size={18} /> <span>Track details</span></div>
-      <Cover src={current.artwork} className="current-cover" />
-      <div className="now-title"><div><h2>{current.title}</h2><p>{current.artist}</p></div>
-        <button className={`icon-button save ${saved.has(current.id) ? "is-saved" : ""}`} onClick={() => save(current)}
-          aria-label="Save selected track" aria-pressed={saved.has(current.id)}>
-          <Heart size={20} fill={saved.has(current.id) ? "currentColor" : "none"} />
-        </button></div>
+        <section className="section"><div className="section-head"><h2>Tracks</h2></div>{rows(featured)}</section>
+      </>;
+      break;
+    case "new": if (!mode) page = <NewMusic connected={youtubeConnected} rows={rows} />; break;
+    case "radio": if (!id && (!mode || stations.some((station) => station.id === mode))) page = <RadioPage station={mode} rows={rows} />; break;
+    case "search": if (!mode) page = <SearchPage connected={youtubeConnected} rows={rows} />; break;
+    case "library": if ((!mode || ["liked", "playlists", "youtube"].includes(mode)) && (!id || (/^[\w-]{1,150}$/.test(id) && mode !== "liked"))) page = <Library key={pathname} account={account} mode={mode ?? "liked"} id={id}
+      favorites={favorites} collection={collection} mutation={mutation} refresh={refresh} dataRevision={revision} rows={rows} />; break;
+    case "player": if (!mode) page = <SpotifyPage account={account} />; break;
+    case "login":
+    case "signup":
+      if (!mode) page = <AccountPage mode={section} account={account} cancelled={cancelled} complete={async () => { await reload(); router.replace("/"); }} />;
+      break;
+    case "settings":
+      if (!mode) page = <Settings account={account} reload={reload} cancelled={cancelled} signedOut={async () => {
+        await reload(); setCurrent(undefined); refresh(); router.replace("/");
+      }} />;
+      break;
+  }
+  return <div className={`app-shell ${showPanel ? "with-panel" : ""}`}>
+    <a className="skip-link" href="#main">Skip to content</a>
+    <aside className="sidebar glass">
+      <Link className="brand" href="/" aria-label="Pulse home"><img src="/pulse.png" alt="" /> <span>Pulse</span></Link>
+      <nav aria-label="Main navigation">{nav}</nav>
+      <div className="sidebar-label">Your collection</div>
+      <nav aria-label="Collection shortcuts">
+        <Link className="nav-link" href="/library/liked"><Heart size={18} /> Liked tracks</Link>
+        <Link className="nav-link" href="/library/playlists"><ListMusic size={18} /> Playlists</Link>
+        <Link className="nav-link" href="/player"><Headphones size={18} /> Spotify player</Link>
+      </nav>
+      <Link className="nav-link sidebar-footer" href="/settings"><Settings2 size={18} /> Settings</Link>
     </aside>
-
-    <nav className="mobile-nav glass" aria-label="Mobile navigation">
-      {navigation.map(({ title, icon: Icon }) => <button key={title} className={screen === title ? "selected" : ""}
-        aria-current={screen === title ? "page" : undefined} onClick={() => go(title)}><Icon size={20} />{title}</button>)}
-    </nav>
+    <main id="main" className="content">
+      <header className="topbar">
+        <Link className="brand compact-brand" href="/" aria-label="Pulse home"><img src="/pulse.png" alt="" /><span>Pulse</span></Link>
+        <Link className="search-shortcut glass" href="/search" aria-label="Search music"><Search size={17} /><span>Search music</span></Link>
+        <div className="top-actions">
+          <Link className="icon-button glass" aria-label="Spotify player" href="/player"><Headphones size={18} /></Link>
+          <Link className="account-button glass" aria-label={authenticated ? "Account settings" : "Sign in"} href={authenticated ? "/settings" : "/login"}>
+            {authenticated ? <span className="avatar">{(account.name || "P").charAt(0).toUpperCase()}</span> : <LogIn size={17} />}
+            <span>{authenticated ? account.name || "Account" : "Sign in"}</span>
+          </Link>
+        </div>
+      </header>
+      {sessionError && <Feedback error={sessionError} retry={() => void reload().catch((error) => setSessionError(describe(error)))} />}
+      {notice && <div className="notice" role="status"><CircleAlert size={18} /><span>{notice}</span>
+        <button className="icon-button" aria-label="Dismiss message" onClick={() => setNotice("")}><X size={17} /></button></div>}
+      {page}
+      {children}
+    </main>
+    {showPanel && <TrackPanel key={current.id} track={current} account={account} collection={collection.data?.items ?? []} saved={saved.has(current.id)}
+      save={() => void toggleSave(current)} close={() => setCurrent(undefined)}
+      add={(playlist) => mutation(`library/playlists/${playlist}/tracks/${current.id}`, "PUT", { title: current.title, artist: current.artist })} />}
+    <nav className="mobile-nav glass" aria-label="Mobile navigation">{nav}</nav>
   </div>;
 }

@@ -60,14 +60,39 @@ export function playlists(page: YoutubePage): Playlist[] {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v1/${path}`, {
+  const response = await fetch(path.startsWith("/auth/") ? path : `/api/v1/${path}`, {
     ...init,
-    headers: { "X-Pulse-Request": "1" },
+    headers: { "X-Pulse-Request": "1", ...(init?.body ? { "Content-Type": "application/json" } : {}) },
     cache: "no-store",
   });
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message && !message.startsWith("<") && message.length < 180 ? message : "Pulse API is unavailable. Try again.");
   }
-  return response.status === 204 ? undefined as T : response.json();
+  const raw = await response.text();
+  return raw ? JSON.parse(raw) as T : undefined as T;
 }
+
+export type Session = {
+  configured: boolean;
+  signed_in: boolean;
+  name?: string;
+  username?: string | null;
+  google_available: boolean;
+  discord_available: boolean;
+  spotify_available: boolean;
+  google_connected: boolean;
+  discord_linked: boolean;
+  youtube_connected: boolean;
+  spotify_connected: boolean;
+};
+
+export function describe(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong. Try again.";
+}
+
+export const stations = [
+  { id: "night", title: "After Hours", description: "Synth-pop for the late shift.", tracks: [0, 1, 2, 3] },
+  { id: "indie", title: "Indie Frequency", description: "Guitar-led and a little offbeat.", tracks: [4, 2, 0] },
+  { id: "dance", title: "Dance Floor", description: "Disco, pop and bright hooks.", tracks: [3, 5, 1] },
+] as const;

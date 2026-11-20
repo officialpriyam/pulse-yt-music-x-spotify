@@ -1,18 +1,28 @@
 # Pulse API
 
-The Rust Axum service handles Google OAuth, YouTube search and playlists, and Pulse liked tracks. It runs as a Vercel Function or as a local HTTP server.
+The Rust Axum service handles Pulse accounts, connected music services, liked tracks and playlists. It runs as a Vercel Function or as a local HTTP server.
 
-## Prepare Google, Neon, and Redis
+## Prepare Neon and Redis
 
 1. Provision Neon Postgres and apply the [versioned migrations](#database-migrations). Use a pooled, TLS-protected connection string in the Vercel backend.
 2. Configure Redis. For Upstash, use its HTTPS REST URL and full-access REST token. For a native Redis provider, set `REDIS_URL` to the provider’s `rediss://` URL and TLS port.
-3. Enable **YouTube Data API v3** in Google Cloud. Configure the OAuth consent screen and add your Google account as a test user while the app is in testing.
-4. Create an OAuth client with type **Web application**. Register `http://localhost:3000/auth/google/callback` for local development and `https://YOUR-WEB-DOMAIN/auth/google/callback` for production. Use the **Next.js site domain**, since the browser talks to the Rust API through the site.
-5. Generate a separate encryption key for each environment. Keep the key stable between deployments so active sessions can still be decrypted.
+3. Generate a separate encryption key for each environment. Keep the key stable between deployments so provider connections can be decrypted.
 
 ```sh
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
+
+## Optional OAuth providers
+
+Register the callbacks on the Next.js site's origin. Use the local equivalents for development where the provider allows them.
+
+| Provider | Setup | Callback paths |
+| --- | --- | --- |
+| Google and YouTube | Create a Google OAuth **Web application** client. Configure consent and test users, and enable YouTube Data API v3 for the music connection. | `/auth/google/callback`, `/auth/youtube/callback` |
+| Discord | Create a Discord application in the Developer Portal and register the OAuth2 redirect. | `/auth/discord/callback` |
+| Spotify | Register a Spotify app with Web API and Web Playback SDK. Add your test users if the app is in Development Mode. | `/auth/spotify/callback` |
+
+Set each enabled provider's client ID and secret in the backend environment. You can leave both values blank for any provider. Username and password sign-in works independently. Spotify browser playback requires Premium, an eligible developer app, and a supported browser.
 
 ## Environment variables
 
@@ -20,8 +30,9 @@ Copy [.env.example](.env.example) to `.env` for local development, or edit the l
 
 | Variable | Value |
 | --- | --- |
-| `GOOGLE_CLIENT_ID` | Google web OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google web OAuth secret |
+| `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` | Optional Google web OAuth client |
+| `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` | Optional Discord OAuth2 client |
+| `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` | Optional Spotify OAuth client |
 | `DATABASE_URL_POOLED` | Neon pooled Postgres connection string. The app prefers this value and accepts `DATABASE_URL` as a fallback. |
 | `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` | Upstash HTTPS REST connection. When both are set, the backend uses this connection. |
 | `REDIS_URL` | Alternative Redis URL with `rediss://` and the provider’s TLS port. Loopback `redis://` works for HTTP development. |
@@ -34,9 +45,9 @@ Use separate databases or branches and Redis instances for production and testin
 ## Deploy the backend on Vercel
 
 1. Import the same GitHub repository for both Vercel projects. Create the Rust project rooted at **`backend`**. Choose **Other** as the framework preset and keep build and output overrides empty. The Rust runtime uses [vercel.json](vercel.json), the Cargo manifest and the [function entry point](api/main.rs). The backend uses Singapore (`sin1`) to stay near the Neon database.
-2. In the backend project's Environment Variables, add the Google credentials, pooled Postgres URL, token encryption key, public web origin and your Redis connection settings to **Production**. Set `PULSE_PUBLIC_URL` to the Next.js site's production origin. If you use a Preview domain, configure its origin and OAuth callback separately.
+2. In the backend project's Environment Variables, add the pooled Postgres URL, token encryption key, public web origin, Redis connection settings, and any enabled OAuth clients to **Production**. Set `PULSE_PUBLIC_URL` to the Next.js site's production origin. If you use a Preview domain, configure its origin and OAuth callback separately.
 3. Deploy using Vercel's Git integration, or run `vercel --prod` from the `backend` folder. Open `/healthz` on the deployed backend URL. The JSON should show `"configured":true` and `"status":"ok"`.
-4. Deploy [the web project](../web/README.md) with `PULSE_BACKEND_URL` set to the Rust deployment's origin. Test **Connect Google** from the web site. The Google callback must return to that same site.
+4. Deploy [the web project](../web/README.md) with `PULSE_BACKEND_URL` set to the Rust deployment's origin. Test username sign-up and whichever provider connections you enabled.
 
 Use a backend domain the web project can reach. If Deployment Protection intercepts requests to the backend with a Vercel sign-in page, adjust the project's protection configuration for the production API origin.
 
@@ -56,7 +67,7 @@ cargo run --locked
 curl http://127.0.0.1:4000/healthz
 ```
 
-When the Google, Postgres and Redis settings are blank, the API starts in guest mode for UI development. Then start Next.js from `web` and open `http://localhost:3000`.
+When the database, encryption key, Redis and OAuth settings are blank, the API starts in guest mode for UI development. Then start Next.js from `web` and open `http://localhost:3000`.
 
 ## Database migrations
 
@@ -84,8 +95,15 @@ Schedule `prune` as a maintenance job against the same database. Each run remove
 | Method and path | Behavior |
 | --- | --- |
 | `GET /healthz` | Service and configured storage check |
-| `GET /auth/google/login` | Starts Google authorization |
-| `GET /auth/google/callback` | Consumes OAuth state, creates a session and redirects to the web app |
+| `POST /auth/signup` and `POST /auth/login` | Create a Pulse account or sign in with a username and password |
+| `POST /auth/credentials` | Add a username and password to a signed-in OAuth account |
+| `GET /auth/{provider}/login` and `GET /auth/{provider}/callback` | Start and finish an enabled OAuth flow. Pass `connect=true` to link a sign-in provider to the current Pulse account. |
+| `POST /auth/{service}/disconnect` | Remove a YouTube or Spotify connection |
+| `POST /api/v1/spotify/token` | Issue a short-lived Spotify access token to the connected user |
+| `GET /api/v1/youtube/popular` | Browse YouTube's popular music chart |
+| `GET or POST /api/v1/library/playlists` | List or create Pulse playlists |
+| `GET, PUT or DELETE /api/v1/library/playlists/{id}` | Read, rename or delete a Pulse playlist |
+| `PUT or DELETE /api/v1/library/playlists/{id}/tracks/{video_id}` | Add or remove a track |
 | `POST /auth/logout` | Ends the Pulse session |
 | `GET /api/v1/session` | Sign-in state and display name |
 | `GET /api/v1/youtube/search?q=QUERY` | Searches the YouTube music catalog |
@@ -99,7 +117,7 @@ Search, playlists and playlist items accept `page_token` from the previous respo
 
 ## Storage and Android
 
-Postgres stores OAuth state, accounts, sessions and saved video IDs. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned by the maintenance command. The browser holds HTTP-only cookies.
+Postgres stores accounts, Argon2id password hashes, OAuth state, sessions, provider connections, liked tracks, and Pulse playlists. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned by the maintenance command. The browser holds HTTP-only cookies.
 
 The Android app talks directly to its music providers. Its public Pulse API origin is set in `gradle.properties`. To test a different backend with the readiness check in **Settings → About**, pass its origin when building.
 

@@ -82,22 +82,17 @@ The `cargoBuild` task cross-compiles the core and copies the `.so` files into
 
 ## Signing a release build
 
-The release build is signed with a real key when `keystore.properties` exists
-beside the project, and with the debug key otherwise. The file and the keystore
-are both ignored by git and must stay that way.
+GitHub Actions builds, tests, verifies, and publishes the ARM64, ARMv7, and universal APKs when Android changes land on `main`. Increase both `versionName` and `versionCode` in `app/build.gradle.kts` for each Android release. Run **Android release** manually in Actions to retry an unpublished version.
 
-```bash
-keytool -genkey -v -keystore pulse-release.jks -keyalg RSA \
-        -keysize 2048 -validity 10000 -alias pulse
-```
+The workflow needs these repository secrets. Keep the same signing key so users can install future versions over existing copies.
 
-```properties
-# keystore.properties, never commit this
-storeFile=pulse-release.jks
-storePassword=…
-keyAlias=pulse
-keyPassword=…
-```
+- `SIGNING_KEYSTORE_BASE64`
+- `SIGNING_STORE_PASSWORD`
+- `SIGNING_KEY_ALIAS`
+- `SIGNING_KEY_PASSWORD`
+- `SIGNING_CERT_SHA256`
+
+For local testing, `:app:assembleDev` uses debug signing when `keystore.properties` is absent. Keep release keystores and `keystore.properties` out of Git.
 
 ## Notes for anyone reading the code
 
