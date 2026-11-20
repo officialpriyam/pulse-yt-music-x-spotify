@@ -268,7 +268,7 @@ impl App {
         let Some(backend) = &self.backend else {
             return Err(UNAUTHORIZED);
         };
-        let hash = cookie_hash(headers, &backend.cookie_name(SESSION)).ok_or(UNAUTHORIZED)?;
+        let (hash, mobile) = session_credentials(headers, backend).ok_or(UNAUTHORIZED)?;
         let client = backend.pool.get().await.map_err(|_| STORAGE)?;
         let row = client
             .query_opt(
@@ -278,8 +278,8 @@ impl App {
              FROM pulse_sessions s JOIN pulse_accounts a USING (account_id)
              LEFT JOIN pulse_youtube_connections c USING (account_id)
              LEFT JOIN pulse_spotify_connections sp USING (account_id)
-             WHERE session_hash = $1 AND expires_at > now()",
-                &[&&hash[..]],
+             WHERE session_hash = $1 AND expires_at > now() AND mobile = $2",
+                &[&&hash[..], &mobile],
             )
             .await
             .map_err(|_| STORAGE)?
@@ -467,6 +467,14 @@ fn cookie_hash(headers: &HeaderMap, name: &str) -> Option<[u8; 32]> {
     (cookie.len() == 43).then(|| digest(cookie))
 }
 
+fn session_credentials(headers: &HeaderMap, backend: &Backend) -> Option<([u8; 32], bool)> {
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
+        let token = value.to_str().ok()?.strip_prefix("Bearer ")?;
+        return (token.len() == 43).then(|| (digest(token), true));
+    }
+    cookie_hash(headers, &backend.cookie_name(SESSION)).map(|hash| (hash, false))
+}
+
 fn require_web_request(headers: &HeaderMap) -> ApiResult<()> {
     if headers
         .get("x-pulse-request")
@@ -480,15 +488,15 @@ fn require_web_request(headers: &HeaderMap) -> ApiResult<()> {
 async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<Response> {
     require_web_request(&headers)?;
     let google = app.backend()?;
-    if let Some(hash) = cookie_hash(&headers, &google.cookie_name(SESSION)) {
+    if let Some((hash, mobile)) = session_credentials(&headers, google) {
         google
             .pool
             .get()
             .await
             .map_err(|_| STORAGE)?
             .execute(
-                "DELETE FROM pulse_sessions WHERE session_hash = $1",
-                &[&&hash[..]],
+                "DELETE FROM pulse_sessions WHERE session_hash = $1 AND mobile = $2",
+                &[&&hash[..], &mobile],
             )
             .await
             .map_err(|_| STORAGE)?;
@@ -558,6 +566,26 @@ async fn popular(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<J
             ("maxResults", "24"),
         ],
         None,
+    )
+    .await
+}
+
+async fn youtube_liked(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Query(page): Query<Page>,
+) -> ApiResult<Json<Value>> {
+    let token = app.access_token(&app.signed_in(&headers).await?).await?;
+    youtube(
+        &app.http,
+        &token,
+        "videos",
+        &[
+            ("part", "snippet"),
+            ("myRating", "like"),
+            ("maxResults", "50"),
+        ],
+        page.page_token,
     )
     .await
 }
@@ -797,12 +825,13 @@ async fn admission(
         let path = request.uri().path();
         if path != "/healthz" {
             let limits = &google.limits;
-            let (bucket, count) = if path.starts_with("/auth/") {
-                ("oauth", limits.oauth)
-            } else {
-                ("api", limits.global)
-            };
-            let session = cookie_hash(request.headers(), &google.cookie_name(SESSION));
+            let (bucket, count) =
+                if path.starts_with("/auth/") || path == "/api/v1/android/google/start" {
+                    ("oauth", limits.oauth)
+                } else {
+                    ("api", limits.global)
+                };
+            let session = session_credentials(request.headers(), google).map(|(hash, _)| hash);
             let allowed = async move {
                 let retry = limits.check(bucket, count).await?;
                 if retry > 0 {
@@ -888,6 +917,13 @@ pub fn router() -> Result<Router, AnyError> {
             get(|| async { Json(json!({ "service": "pulse-api", "health": "/healthz" })) }),
         )
         .route("/healthz", get(health))
+        .route("/api/v1/android/google/start", post(auth::android::begin))
+        .route(
+            "/api/v1/android/google/complete",
+            post(auth::android::complete),
+        )
+        .route("/auth/android/google/start", get(auth::android::authorize))
+        .route("/auth/android/google/callback", get(auth::android::finish))
         .route("/auth/{provider}/login", get(auth::oauth_start))
         .route("/auth/{provider}/callback", get(auth::oauth_callback))
         .route("/auth/signup", post(auth::signup))
@@ -914,6 +950,7 @@ pub fn router() -> Result<Router, AnyError> {
         .route("/api/v1/session", get(auth::session))
         .route("/api/v1/youtube/playlists", get(playlists))
         .route("/api/v1/youtube/popular", get(popular))
+        .route("/api/v1/youtube/liked", get(youtube_liked))
         .route("/api/v1/youtube/playlist-items", get(playlist_items))
         .route("/api/v1/youtube/search", get(search))
         .route("/api/v1/favorites", get(favorites))

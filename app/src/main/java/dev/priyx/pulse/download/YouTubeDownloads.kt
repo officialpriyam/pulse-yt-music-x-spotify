@@ -5,6 +5,8 @@ import dev.priyx.pulse.backend.youtube.YouTubeBackend
 import dev.priyx.pulse.backend.youtube.YouTubeStreams
 import dev.priyx.pulse.data.DownloadStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -64,9 +66,32 @@ object YouTubeDownloads {
     fun fileFor(context: Context, trackUri: String): File? {
         if (!YouTubeBackend.isSong(trackUri)) return null
         val id = YouTubeBackend.videoIdOfUri(trackUri)
-        return directory(context).listFiles()?.firstOrNull {
+        return find(directory(context), id)
+    }
+
+    private fun find(directory: File, id: String): File? =
+        directory.listFiles()?.firstOrNull {
             it.nameWithoutExtension == id && it.extension != PARTIAL
         }
+
+    private fun upcomingDirectory(context: Context): File = File(context.cacheDir, "next-tracks")
+
+    internal fun upcomingFile(context: Context, trackUri: String): File? =
+        if (YouTubeBackend.isSong(trackUri)) find(upcomingDirectory(context), YouTubeBackend.videoIdOfUri(trackUri)) else null
+
+    internal fun retainUpcoming(context: Context, tracks: Set<String>) {
+        val ids = tracks.filter(YouTubeBackend::isSong).map(YouTubeBackend::videoIdOfUri).toSet()
+        upcomingDirectory(context).listFiles()?.forEach { file ->
+            if (file.extension == PARTIAL || file.nameWithoutExtension !in ids) file.delete()
+        }
+    }
+
+    internal suspend fun cacheUpcoming(context: Context, trackUri: String) {
+        if (!VIDEO_ID.matches(YouTubeBackend.videoIdOfUri(trackUri))) return
+        val dir = upcomingDirectory(context)
+        if (fileFor(context, trackUri) != null || upcomingFile(context, trackUri) != null) return
+        dir.mkdirs()
+        fetch(context, trackUri, dir, maxBytes = 16L * 1024 * 1024, permanent = false) {}
     }
 
     fun cancel(trackUri: String) {
@@ -98,8 +123,17 @@ object YouTubeDownloads {
         context: Context,
         trackUri: String,
         onProgress: (Float) -> Unit,
+    ): DownloadStore.FileRecord = fetch(context, trackUri, directory(context), Long.MAX_VALUE, permanent = true, onProgress)
+
+    private suspend fun fetch(
+        context: Context,
+        trackUri: String,
+        dir: File,
+        maxBytes: Long,
+        permanent: Boolean,
+        onProgress: (Float) -> Unit,
     ): DownloadStore.FileRecord = withContext(Dispatchers.IO) {
-        cancelled.remove(trackUri)
+        if (permanent) cancelled.remove(trackUri)
         YouTubeStreams.ensureNewPipe()
         val id = YouTubeBackend.videoIdOfUri(trackUri)
         // Asked without an account first, and as the account where YouTube
@@ -122,7 +156,6 @@ object YouTubeDownloads {
         }
         val extension = source.extension
 
-        val dir = directory(context)
         val part = File(dir, "$id.$extension.$PARTIAL")
         val done = File(dir, "$id.$extension")
         var offset = 0L
@@ -130,7 +163,8 @@ object YouTubeDownloads {
         try {
             FileOutputStream(part, false).use { out ->
                 while (total < 0 || offset < total) {
-                    if (trackUri in cancelled) throw kotlinx.coroutines.CancellationException("removed")
+                    currentCoroutineContext().ensureActive()
+                    if (permanent && trackUri in cancelled) throw kotlinx.coroutines.CancellationException("removed")
                     val request = Request.Builder()
                         .url(source.url)
                         .header("Range", "bytes=$offset-${offset + CHUNK_BYTES - 1}")
@@ -139,6 +173,12 @@ object YouTubeDownloads {
                         if (response.code != 200 && response.code != 206) {
                             throw IOException("HTTP ${response.code}")
                         }
+                        if (response.code == 200 && offset != 0L) throw IOException("Audio server rejected byte ranges")
+                        if (response.code == 206) {
+                            val rangeStart = response.header("Content-Range")?.substringAfter("bytes ")
+                                ?.substringBefore('-')?.toLongOrNull()
+                            if (rangeStart != offset) throw IOException("Unexpected audio range")
+                        }
                         if (total < 0) {
                             total = response.header("Content-Range")
                                 ?.substringAfterLast('/')
@@ -146,14 +186,19 @@ object YouTubeDownloads {
                                 ?: -1L
                         }
                         val body = response.body ?: throw IOException("empty response")
+                        if (total > maxBytes || body.contentLength() > maxBytes - offset) {
+                            throw IOException("Track exceeds the queue cache limit")
+                        }
                         val before = offset
                         body.byteStream().use { input ->
                             val buffer = ByteArray(BUFFER_BYTES)
                             while (true) {
                                 val read = input.read(buffer)
                                 if (read < 0) break
-                                out.write(buffer, 0, read)
+                                currentCoroutineContext().ensureActive()
                                 offset += read
+                                if (offset > maxBytes) throw IOException("Track exceeds the queue cache limit")
+                                out.write(buffer, 0, read)
                             }
                         }
                         // The whole file in one answer, or a piece shorter than
@@ -168,6 +213,8 @@ object YouTubeDownloads {
                     if (total > 0) onProgress((offset.toFloat() / total).coerceIn(0f, 1f))
                 }
             }
+            currentCoroutineContext().ensureActive()
+            if (offset <= 0 || offset != total) throw IOException("Incomplete track")
             if (!part.renameTo(done)) throw IOException("cannot keep $id")
         } catch (t: Throwable) {
             part.delete()
@@ -186,6 +233,7 @@ object YouTubeDownloads {
     /** Where a song's audio is fetched from, and what it is. */
     private class Source(val url: String, val extension: String, val kbps: Int)
 
+    private val VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
     private const val PARTIAL = "part"
     private const val READ_TIMEOUT_SECONDS = 30L
 

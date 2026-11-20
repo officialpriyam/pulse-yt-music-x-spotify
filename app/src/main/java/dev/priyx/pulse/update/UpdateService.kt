@@ -16,22 +16,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/**
- * Fetches the new version while the listener does something else.
- *
- * A twenty-megabyte download tied to a screen is a download that dies when the
- * screen does: the old one lived in the composition, so leaving the app — or
- * merely opening the player — took it with it, and there was nothing to say how
- * far it had got. A foreground service is what Android gives an app for work it
- * must be allowed to finish, and the notification is not decoration but the
- * price of the permission: it says what is happening and how far along it is.
- *
- * The service does the fetching and nothing else. Installing is still the
- * system's dialog and still cannot be skipped, which is the right shape for a
- * thing that replaces the app.
- */
+/** Downloads and verifies an update in a foreground service. */
 class UpdateService : Service() {
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var running = false
 
@@ -42,6 +28,8 @@ class UpdateService : Service() {
         val version = intent?.getStringExtra(EXTRA_VERSION).orEmpty()
         val bytes = intent?.getLongExtra(EXTRA_BYTES, 0L) ?: 0L
 
+        val sha256 = intent?.getStringExtra(EXTRA_SHA256).orEmpty()
+        val automatic = intent?.getBooleanExtra(EXTRA_AUTOMATIC, false) ?: false
         if (url.isNullOrEmpty() || running) return START_NOT_STICKY
         running = true
 
@@ -50,10 +38,13 @@ class UpdateService : Service() {
 
         val updater = (applicationContext as PulseApplication).updater
         scope.launch {
-            updater.fetchAndInstall(url, version, bytes) { progress ->
-                notify(version, progress)
+            try {
+                updater.fetchAndInstall(url, version, bytes, sha256, automatic) { progress ->
+                    notify(version, progress)
+                }
+            } finally {
+                stopSelf()
             }
-            stopSelf()
         }
         return START_NOT_STICKY
     }
@@ -105,13 +96,17 @@ class UpdateService : Service() {
         private const val EXTRA_URL = "url"
         private const val EXTRA_VERSION = "version"
         private const val EXTRA_BYTES = "bytes"
+        private const val EXTRA_SHA256 = "sha256"
+        private const val EXTRA_AUTOMATIC = "automatic"
 
         /** Starts the download; safe to call twice, the second is ignored. */
-        fun start(context: Context, update: Updater.State.Available) {
+        fun start(context: Context, update: Updater.State.Available, automatic: Boolean) {
             val intent = Intent(context, UpdateService::class.java)
                 .putExtra(EXTRA_URL, update.url)
                 .putExtra(EXTRA_VERSION, update.version)
                 .putExtra(EXTRA_BYTES, update.bytes)
+                .putExtra(EXTRA_SHA256, update.sha256)
+                .putExtra(EXTRA_AUTOMATIC, automatic)
             context.startForegroundService(intent)
         }
     }

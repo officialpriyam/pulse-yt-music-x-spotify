@@ -581,6 +581,64 @@ async fn resolve_item(session: &Session, uri: SpotifyUri) -> Result<AudioItem, S
     Err("no alternative of this track can be played".to_string())
 }
 
+/// Warms librespot's bounded encrypted cache for a track that will play next.
+pub fn warm_track(uri: &str) -> EngineResult<bool> {
+    static WARMER: Mutex<()> = Mutex::new(());
+    let Ok(_slot) = WARMER.try_lock() else { return Ok(false) };
+    let session = engine::with_session(Session::clone)?;
+    let uri = SpotifyUri::from_uri(uri).map_err(|e| format!("invalid queue track: {e}"))?;
+    let id = SpotifyId::try_from(&uri).map_err(|e| format!("invalid queue track: {e}"))?;
+    if lookup_track(&id).is_some() { return Ok(true); }
+    engine::runtime_handle()?.block_on(async {
+        if session.is_invalid() { return Ok(false); }
+        let Ok(item) = resolve_item(&session, uri).await else { return Ok(true); };
+        let Some((format, file_id)) = preferred_formats(160).iter()
+            .find_map(|format| item.files.get(format).map(|file| (*format, *file))) else {
+            return Ok(true);
+        };
+        let Some(path) = session.cache().and_then(|cache| cache.file_path(file_id)) else {
+            return Ok(false);
+        };
+        // Let the playing track and the existing gapless preload ask for keys first.
+        for _ in 0..12 {
+            if librespot_core::audio_key::since_playback_request()
+                .is_none_or(|since| since >= std::time::Duration::from_secs(6)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if librespot_core::audio_key::since_playback_request()
+            .is_some_and(|since| since < std::time::Duration::from_secs(6)) {
+            return Ok(false);
+        }
+        if lookup_track(&id).is_some() { return Ok(true); }
+        let Ok(key) = session.audio_key().request(id, file_id).await else { return Ok(false); };
+        let file = librespot_audio::AudioFile::open(&session, file_id, 20_000).await
+            .map_err(|_| "could not open queued audio")?;
+        let controller = file.get_stream_loader_controller().map_err(|_| "could not read queued audio")?;
+        let length = controller.len();
+        if length == 0 || length > 16 * 1024 * 1024 { return Ok(true); }
+        tokio::task::spawn_blocking(move || controller.fetch_next_and_wait(length, length))
+            .await.map_err(|_| "queue cache worker stopped")?.map_err(|_| "queued audio is incomplete")?;
+        let UniqueFields::Track { album, album_artists, number, disc_number, .. } = item.unique_fields else {
+            return Ok(true);
+        };
+        remember_heard(&id, DownloadedTrack {
+            path,
+            key: Some(key.0),
+            format,
+            name: item.name,
+            duration_ms: item.duration_ms,
+            is_explicit: item.is_explicit,
+            album,
+            album_artists,
+            number,
+            disc_number,
+        }, length as u64);
+        Ok(true)
+    })
+}
+
 /// Downloads one track, resuming a part-finished one, and answers with the
 /// sidecar it wrote.
 ///

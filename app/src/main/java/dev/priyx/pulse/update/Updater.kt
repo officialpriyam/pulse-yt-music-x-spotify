@@ -4,10 +4,14 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.pm.PackageInfoCompat
 import dev.priyx.pulse.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,25 +24,14 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.security.MessageDigest
 
-/**
- * Updates the app from its own GitHub releases.
- *
- * Pulse cannot go on the Play Store — it re-implements a protocol whose terms
- * forbid it — so there is nothing to deliver an update but the app itself. The
- * releases page is already the distribution channel; this reads it.
- *
- * Nothing here has to verify what it downloads. Android refuses an update
- * signed with a different key than the installed copy, so an APK that is not
- * the one built with the project's keystore simply fails to install. A hash
- * check on top would look reassuring and add nothing the platform does not
- * already enforce.
- */
+/** Installs signed updates from the Pulse GitHub release channel. */
 class Updater(context: Context) {
 
     private val app = context.applicationContext
     private val json = Json { ignoreUnknownKeys = true }
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder().followSslRedirects(false).build()
 
     /** The last whole percent handed to the notification; see [download]. */
     private var lastReported = -1
@@ -64,26 +57,25 @@ class Updater(context: Context) {
              * anyway.
              */
             val notes: String = "",
+            val sha256: String,
         ) : State
         /** 0f..1f, or null while the server sends no length to measure against. */
         data class Downloading(val progress: Float?) : State
         /** Handed to the system installer; the dialog is Android's, not ours. */
         data object Installing : State
+        data class AwaitingApproval(val intent: Intent) : State
         data class Failed(val reason: String) : State
     }
 
-    /**
-     * Asks GitHub what the latest release is.
-     *
-     * Unauthenticated, which allows sixty requests an hour per address — far
-     * more than a button can spend. It is still a request the user did not ask
-     * for, which is why nothing here runs on its own: it is called when the
-     * button is pressed and at no other time.
-     */
     suspend fun check() {
+        if (_state.value.isBusy()) return
         _state.value = State.Checking
         val result = runCatching { withContext(Dispatchers.IO) { latestRelease() } }
             .getOrElse {
+                if (it is CancellationException) {
+                    _state.value = State.Idle
+                    throw it
+                }
                 android.util.Log.w(TAG, "check failed: $it")
                 _state.value = State.Failed(it.message ?: "network")
                 return
@@ -94,20 +86,9 @@ class Updater(context: Context) {
             return
         }
         _state.value =
-            State.Available(result.version, result.url, result.bytes, result.notes)
+            State.Available(result.version, result.url, result.bytes, result.notes, result.sha256)
     }
 
-    /**
-     * Checks, and installs whatever it finds, as one action.
-     *
-     * Split in two internally but never in the interface: "there is an update"
-     * is not a decision the user has anything to decide with — they pressed a
-     * row that says update, and being asked again is a step, not a safeguard.
-     * The safeguard is Android's own dialog, which no app can skip.
-     *
-     * @return the update it could not install without permission, so the caller
-     *   can ask for it and come back here rather than starting over.
-     */
     suspend fun checkAndInstall(): State.Available? {
         check()
         val update = _state.value as? State.Available ?: return null
@@ -124,6 +105,7 @@ class Updater(context: Context) {
         val url: String,
         val bytes: Long,
         val notes: String,
+        val sha256: String,
     )
 
     private fun latestRelease(): Release? {
@@ -137,36 +119,30 @@ class Updater(context: Context) {
             val body = json.parseToJsonElement(response.body?.string().orEmpty()) as? JsonObject
                 ?: return null
             val tag = body["tag_name"]?.jsonPrimitive?.content?.removePrefix("v") ?: return null
+            if (!VERSION.matches(tag)) return null
             val apks = (body["assets"] as? JsonArray)
                 ?.filterIsInstance<JsonObject>()
                 ?.filter { it["name"]?.jsonPrimitive?.content?.endsWith(".apk") == true }
                 .orEmpty()
-            // One APK per ABI and a universal one: the phone's own first, in
-            // the order it prefers them, then the universal, then whatever
-            // there is, for a release that ships a single APK.
-            fun named(part: String) = apks.firstOrNull {
-                it["name"]?.jsonPrimitive?.content?.contains(part) == true
+            fun named(abi: String) = apks.firstOrNull {
+                it["name"]?.jsonPrimitive?.content == "pulse-$tag-$abi.apk"
             }
-            val asset = android.os.Build.SUPPORTED_ABIS.firstNotNullOfOrNull(::named)
+            val asset = Build.SUPPORTED_ABIS.firstNotNullOfOrNull(::named)
                 ?: named("universal")
-                ?: apks.firstOrNull()
                 ?: return null
+            val name = asset["name"]?.jsonPrimitive?.content ?: return null
             val url = asset["browser_download_url"]?.jsonPrimitive?.content ?: return null
-            val size = asset["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            if (url != "https://github.com/$REPO/releases/download/v$tag/$name") return null
+            val size = asset["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: return null
+            val hash = asset["digest"]?.jsonPrimitive?.content?.removePrefix("sha256:") ?: return null
+            if (size !in 1L..MAX_APK_SIZE || !SHA256.matches(hash)) return null
             val notes = body["body"]?.jsonPrimitive?.content.orEmpty().trim()
-            return Release(tag, url, size, notes)
+            return Release(tag, url, size, notes, hash)
         }
     }
 
-    /**
-     * Downloads the APK and hands it to the system installer.
-     *
-     * The confirmation dialog is Android's and cannot be skipped: only a system
-     * app installs silently. That is the right outcome — an app that could
-     * replace itself unattended is one the user has to trust rather more than
-     * this one asks to be trusted.
-     */
-    fun install(update: State.Available) {
+    fun install(update: State.Available, automatic: Boolean = false) {
+        if (_state.value.isBusy()) return
         lastOffered = update
         if (!canInstall()) {
             _state.value = State.Failed(REASON_PERMISSION)
@@ -178,7 +154,8 @@ class Updater(context: Context) {
         // app — or merely opening the player — cancelled the download halfway
         // with nothing to show for it. See UpdateService.
         _state.value = State.Downloading(null)
-        UpdateService.start(app, update)
+        runCatching { UpdateService.start(app, update, automatic) }
+            .onFailure { _state.value = State.Failed("Could not start update") }
     }
 
     /**
@@ -191,27 +168,32 @@ class Updater(context: Context) {
         url: String,
         version: String,
         bytes: Long,
+        sha256: String,
+        automatic: Boolean,
         onProgress: (Float?) -> Unit,
     ) {
-        val update = State.Available(version, url, bytes)
+        val update = State.Available(version, url, bytes, sha256 = sha256)
         _state.value = State.Downloading(null)
         onProgress(null)
 
         val apk = runCatching {
             withContext(Dispatchers.IO) { download(update, onProgress) }
         }.getOrElse {
+            File(app.cacheDir, "update.apk").delete()
+            if (it is CancellationException) throw it
             android.util.Log.w(TAG, "download failed: $it")
             _state.value = State.Failed(it.message ?: "download")
             return
         }
 
-        runCatching { withContext(Dispatchers.IO) { commit(apk) } }
-            .onSuccess { _state.value = State.Installing }
+        _state.value = State.Installing
+        runCatching { withContext(Dispatchers.IO) { commit(apk, automatic) } }
             .onFailure {
+                if (it is CancellationException) throw it
                 android.util.Log.w(TAG, "install failed: $it")
-                apk.delete()
                 _state.value = State.Failed(it.message ?: "install")
             }
+        apk.delete()
     }
 
     private fun download(update: State.Available, onProgress: (Float?) -> Unit): File {
@@ -222,11 +204,13 @@ class Updater(context: Context) {
         target.delete()
         lastReported = -1
 
+        val digest = MessageDigest.getInstance("SHA-256")
         val request = Request.Builder().url(update.url).build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}")
             val body = response.body ?: error("empty body")
             val total = body.contentLength().takeIf { it > 0 } ?: update.bytes
+            check(total == update.bytes) { "Unexpected APK size" }
             var written = 0L
 
             body.byteStream().use { input ->
@@ -235,8 +219,10 @@ class Updater(context: Context) {
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
-                        output.write(buffer, 0, read)
                         written += read
+                        check(written <= total) { "Unexpected APK size" }
+                        digest.update(buffer, 0, read)
+                        output.write(buffer, 0, read)
                         if (total > 0) {
                             val progress = written.toFloat() / total
                             _state.value = State.Downloading(progress)
@@ -254,32 +240,70 @@ class Updater(context: Context) {
                 }
             }
         }
+        val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        check(target.length() == update.bytes && actual == update.sha256) { "Update download failed verification" }
         return target
     }
 
-    private fun commit(apk: File) {
+    private fun commit(apk: File, automatic: Boolean) {
+        @Suppress("DEPRECATION")
+        val candidate = app.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        check(candidate != null && candidate.packageName == app.packageName &&
+            PackageInfoCompat.getLongVersionCode(candidate) > BuildConfig.VERSION_CODE) {
+            "The APK is not an update for Pulse"
+        }
         val installer = app.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(
             PackageInstaller.SessionParams.MODE_FULL_INSTALL,
-        )
-        val sessionId = installer.createSession(params)
-        installer.openSession(sessionId).use { session ->
-            session.openWrite("pulse", 0, apk.length()).use { output ->
-                apk.inputStream().use { it.copyTo(output) }
-                session.fsync(output)
+        ).apply {
+            setAppPackageName(app.packageName)
+            setSize(apk.length())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && automatic) {
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
             }
-            session.commit(
-                PendingIntent.getBroadcast(
-                    app,
-                    0,
-                    Intent(app, InstallReceiver::class.java)
-                        .setPackage(app.packageName),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-                ).intentSender,
-            )
         }
-        apk.delete()
+        val sessionId = installer.createSession(params)
+        try {
+            installer.openSession(sessionId).use { session ->
+                session.openWrite("pulse", 0, apk.length()).use { output ->
+                    apk.inputStream().use { it.copyTo(output) }
+                    session.fsync(output)
+                }
+                session.commit(
+                    PendingIntent.getBroadcast(
+                        app,
+                        0,
+                        Intent(app, InstallReceiver::class.java)
+                            .setPackage(app.packageName),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+                    ).intentSender,
+                )
+            }
+        } catch (failure: Exception) {
+            runCatching { installer.abandonSession(sessionId) }
+            throw failure
+        }
     }
+
+    fun canAutoInstall(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && canInstall()
+
+    fun isUnmetered(): Boolean {
+        val manager = app.getSystemService(ConnectivityManager::class.java)
+        val capabilities = manager?.getNetworkCapabilities(manager.activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
+    fun awaitingApproval(intent: Intent) {
+        _state.value = State.AwaitingApproval(intent)
+    }
+
+    fun approvalOpened() {
+        if (_state.value is State.AwaitingApproval) _state.value = State.Installing
+    }
+
+    private fun State.isBusy() = this is State.Checking || this is State.Downloading ||
+        this is State.Installing || this is State.AwaitingApproval
 
     /** Whether the user has allowed this app to install packages at all. */
     fun canInstall(): Boolean =
@@ -312,12 +336,15 @@ class Updater(context: Context) {
      * until the next release came out (#151).
      */
     fun installAbandoned() {
-        if (_state.value !is State.Installing) return
+        if (_state.value !is State.Installing && _state.value !is State.AwaitingApproval) return
         _state.value = lastOffered ?: State.Idle
     }
 
     companion object {
         private const val TAG = "Updater"
+        private const val MAX_APK_SIZE = 128 * 1024 * 1024L
+        private val VERSION = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")
+        private val SHA256 = Regex("[0-9a-f]{64}")
 
         const val REPO = "officialpriyam/pulse-yt-music-x-spotify"
 

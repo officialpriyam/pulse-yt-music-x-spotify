@@ -66,6 +66,14 @@ class DownloadSettingsStore(context: Context) {
         prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
     }
 
+    private val _cacheUpcoming = MutableStateFlow(prefs.getBoolean(KEY_CACHE_UPCOMING, true))
+    val cacheUpcoming: StateFlow<Boolean> = _cacheUpcoming.asStateFlow()
+
+    fun setCacheUpcoming(value: Boolean) {
+        _cacheUpcoming.value = value
+        prefs.edit().putBoolean(KEY_CACHE_UPCOMING, value).apply()
+    }
+
     private val _likedSongs = MutableStateFlow(prefs.getBoolean(KEY_LIKED, false))
 
     /** Whether the whole of Liked Songs is kept offline, and kept in step. */
@@ -98,6 +106,7 @@ class DownloadSettingsStore(context: Context) {
         const val KEY_QUALITY = "quality"
         const val KEY_WIFI_ONLY = "wifi_only"
         const val KEY_LIKED = "liked_songs"
+        const val KEY_CACHE_UPCOMING = "cache_upcoming"
         const val KEY_OFFLINE = "offline_mode"
     }
 }

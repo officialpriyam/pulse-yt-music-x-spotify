@@ -177,7 +177,11 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
      * rather than the public catalogue.
      */
     override suspend fun playlists(): List<CatalogPlaylist> = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext emptyList()
+        if (account.hasMobileSession) {
+            return@withContext listOf(CatalogPlaylist(uri = LIKED_MUSIC_URI, name = account.likedPlaylistName())) +
+                account.connectedPlaylists()
+        }
+        if (!account.hasLegacySession) return@withContext emptyList()
 
         YouTube.library(LIKED_PLAYLISTS_BROWSE_ID)
             .getOrThrow()
@@ -201,7 +205,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
      * playlists on theirs.
      */
     override suspend fun savedAlbums(): List<CatalogPlaylist> = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext emptyList()
+        if (!account.hasLegacySession) return@withContext emptyList()
         runCatching {
             YouTube.library(SAVED_ALBUMS_BROWSE_ID)
                 .getOrThrow()
@@ -216,7 +220,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
 
     /** The podcasts saved to the library, from YouTube Music's page of them. */
     override suspend fun savedShows(): List<CatalogPlaylist> = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext emptyList()
+        if (!account.hasLegacySession) return@withContext emptyList()
         runCatching {
             YouTube.savedPodcastShows().getOrThrow().mapNotNull(::toCatalogPlaylist)
         }.getOrElse {
@@ -227,7 +231,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
 
     /** YouTube Music's own "New episodes" list, of the podcasts saved. */
     override suspend fun newEpisodes(): List<CatalogTrack> = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext emptyList()
+        if (!account.hasLegacySession) return@withContext emptyList()
         runCatching {
             YouTube.newEpisodes().getOrThrow().map { toCatalogTrack(it).copy(releasedAt = "") }
         }.getOrElse {
@@ -238,7 +242,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
 
     /** The artists the account subscribed to, from the library page of them. */
     override suspend fun followedArtists(): List<SearchItem> = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext emptyList()
+        if (!account.hasLegacySession) return@withContext emptyList()
         runCatching {
             YouTube.library(FOLLOWED_ARTISTS_BROWSE_ID)
                 .getOrThrow()
@@ -472,7 +476,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
      * language is swapped under the same lock as the country in [wherever].
      */
     suspend fun listeningHistory(): List<Pair<String, List<CatalogTrack>>>? = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext null
+        if (!account.hasLegacySession) return@withContext null
         val page = regionLock.withLock {
             val kept = YouTube.locale
             YouTube.locale = kept.copy(hl = "en")
@@ -517,6 +521,10 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
     override suspend fun tracksOf(uri: String): List<CatalogTrack> = withContext(Dispatchers.IO) {
         val id = uri.substringAfterLast(':')
         when {
+            account.hasMobileSession && uri == LIKED_MUSIC_URI -> account.connectedTracks(null)
+            account.hasMobileSession && uri.startsWith(CONNECTED_PLAYLIST_PREFIX) ->
+                account.connectedTracks(uri.removePrefix(CONNECTED_PLAYLIST_PREFIX))
+            uri.startsWith(CONNECTED_PLAYLIST_PREFIX) -> emptyList()
             uri.startsWith(TRACK_PREFIX) || uri.startsWith(VIDEO_PREFIX) -> emptyList()
 
             // A song's radio, reopened: asked again, as there is no list to browse.
@@ -567,7 +575,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
     suspend fun tracksIfChanged(uri: String, stamp: String?): Pair<String?, List<CatalogTrack>?> =
         withContext(Dispatchers.IO) {
             val listed = uri.startsWith(PLAYLIST_PREFIX) || uri.startsWith(VIDEOS_PREFIX)
-            if (!listed || isStation(uri)) return@withContext null to tracksOf(uri)
+            if (!listed || isStation(uri) || (account.hasMobileSession && uri == LIKED_MUSIC_URI)) return@withContext null to tracksOf(uri)
             val id = uri.substringAfterLast(':')
             val first = YouTube.playlist(id).getOrThrow()
             val now = stampOf(first)
@@ -745,7 +753,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
     private val editable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     override fun canWriteTo(playlistUri: String): Boolean =
-        account.isSignedIn && playlistUri.removePrefix(PLAYLIST_PREFIX) in editable
+        account.hasLegacySession && playlistUri.removePrefix(PLAYLIST_PREFIX) in editable
 
     /** Playlist entry ids, by "playlist/video"; see [removeFromPlaylist]. */
     private val entries = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -808,7 +816,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
     }
 
     override val canEditPlaylists: Boolean
-        get() = account.isSignedIn
+        get() = account.hasLegacySession
 
     override suspend fun createPlaylist(name: String, description: String, public: Boolean): CatalogPlaylist =
         withContext(Dispatchers.IO) {
@@ -839,7 +847,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
      * is the like button, see [addToPlaylist].
      */
     override suspend fun writablePlaylists(): List<CatalogPlaylist> = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext emptyList()
+        if (!account.hasLegacySession) return@withContext emptyList()
         YouTube.library(LIKED_PLAYLISTS_BROWSE_ID)
             .getOrThrow()
             .items
@@ -889,7 +897,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
     }
 
     override suspend fun isFollowing(artistUri: String): Boolean? = withContext(Dispatchers.IO) {
-        if (!account.isSignedIn) return@withContext null
+        if (!account.hasLegacySession) return@withContext null
         val id = publicArtistId(artistUri.removePrefix(ARTIST_PREFIX))
         artists[id]?.subscribed ?: runCatching {
             val page = YouTube.artist(id).getOrThrow()
@@ -924,6 +932,7 @@ class YouTubeBackend(private val account: YouTubeAccount) : MusicBackend {
         const val URI_SCHEME = "ytmusic:"
         const val TRACK_PREFIX = "ytmusic:track:"
         const val PLAYLIST_PREFIX = "ytmusic:playlist:"
+        internal const val CONNECTED_PLAYLIST_PREFIX = "ytmusic:connected:"
         const val ARTIST_PREFIX = "ytmusic:artist:"
         const val ALBUM_PREFIX = "ytmusic:album:"
         /** A video played as one, picture and all, whatever the video button says. */

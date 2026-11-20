@@ -1,3 +1,5 @@
+pub(crate) mod android;
+
 use argon2::{
     Argon2, PasswordHasher, PasswordVerifier,
     password_hash::{PasswordHash, SaltString},

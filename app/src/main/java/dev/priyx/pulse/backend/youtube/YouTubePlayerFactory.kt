@@ -408,6 +408,7 @@ private class YouTubeStreamResolver(
         // showing and there is a network to fetch it over: the file is the
         // sound alone.
         val kept = dev.priyx.pulse.download.YouTubeDownloads.fileFor(context, base)
+            ?: dev.priyx.pulse.download.YouTubeDownloads.upcomingFile(context, base)
         // Never for half of a video: the picture is the official video's, and
         // its sound has to be that video's too or the two drift apart.
         if (kept != null && part == null &&

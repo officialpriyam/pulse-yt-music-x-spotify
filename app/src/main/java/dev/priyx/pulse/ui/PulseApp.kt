@@ -826,7 +826,7 @@ fun PulseApp(
     var showTutorial by remember { mutableStateOf(false) }
 
     /** The Google sign-in web view, opened from the settings. */
-    var showYouTubeLogin by remember { mutableStateOf(false) }
+    var showYouTubeLogin by rememberSaveable { mutableStateOf(false) }
 
     // The open track menu, if any. Held here because the menu is drawn above
     // everything the app puts over its screens.
@@ -4030,7 +4030,11 @@ fun PulseApp(
                 // Here rather than at the top of the app: a sheet made of
                 // glass has to be drawn where there is a layer to refract, and
                 // this is the layer the other sheets use.
-                UpdatePrompt(overlayBackdrop, onOpenChange = { updateOpen = it })
+                UpdatePrompt(
+                    backdrop = overlayBackdrop,
+                    allowAutomatic = player != null && !local.wantsPlay && !local.isPlaying && !showYouTubeLogin,
+                    onOpenChange = { updateOpen = it },
+                )
 
                 AddToPlaylistSheet(
                     state = addToPlaylist,
@@ -4105,9 +4109,6 @@ fun PulseApp(
                 // Above the tutorial too, and asked first: everything the
                 // tutorial explains is Spotify's setup, so the source has to be
                 // settled before any of it is worth walking through.
-                // Over everything, like the tutorial: it is Google's own sign-in
-                // page and half-covering it would be the wrong thing to do with
-                // a page someone is typing a password into.
                 if (showYouTubeLogin) {
                     val account = remember(context) {
                         (context.applicationContext as dev.priyx.pulse.PulseApplication)
@@ -4404,38 +4405,21 @@ private fun Player.cycleRepeatMode() {
     }
 }
 
-/**
- * The playing track as the last session left it, or null when there was none.
- *
- * The saved index points into the *current* order while the list is kept in the
- * pre-shuffle one, so the permutation has to be applied to find the track that
- * was actually playing.
- */
-/**
- * Asks GitHub for a newer release when the app opens, and says so if there is one.
- *
- * This used to be a button in the settings and nothing else, on the grounds
- * that the check is a request made for the app's benefit rather than the
- * user's. The trouble with that is who it leaves behind: an app no store can
- * reach, whose owner never opens the settings, stays on the version it was
- * installed with forever, security fixes and all. So it runs on its own now,
- * with the cost kept small: at most one request every six hours, and one
- * dialog per release, ever.
- *
- * Everything that can go wrong is silence. The check is not something the user
- * asked for, so a failure is not something to tell them about.
- */
+/** Periodically checks GitHub and installs available updates when the phone can do so. */
 @Composable
 private fun UpdatePrompt(
     backdrop: dev.priyx.pulse.ui.glass.backdrop.Backdrop,
+    allowAutomatic: Boolean,
     onOpenChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val updater = remember(context) {
         (context.applicationContext as dev.priyx.pulse.PulseApplication).updater
     }
-    val prefs = remember(context) { dev.priyx.pulse.data.PreferencesStore(context) }
-    val scope = rememberCoroutineScope()
+    val prefs = (context.applicationContext as dev.priyx.pulse.PulseApplication).preferences
+    val automatic by prefs.automaticUpdates.collectAsStateWithLifecycle()
+    val allowed by rememberUpdatedState(allowAutomatic && automatic)
+    var autoAttempt by rememberSaveable { mutableStateOf<String?>(null) }
     val state by updater.state.collectAsStateWithLifecycle()
 
     // Each time the app comes to the front, not only when it is launched. A
@@ -4452,6 +4436,35 @@ private fun UpdatePrompt(
             // one shape of this that would be a nuisance.
             prefs.setLastUpdateCheck(now)
             runCatching { updater.check() }
+        }
+    }
+
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            updater.state.collect { current ->
+                if (current is Updater.State.AwaitingApproval) {
+                    runCatching { context.startActivity(current.intent) }
+                        .onSuccess {
+                            updater.approvalOpened()
+                            dev.priyx.pulse.update.InstallReceiver.cancelPrompt(context)
+                        }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                val available = updater.state.value as? Updater.State.Available
+                if (allowed && available != null && autoAttempt != available.version &&
+                    prefs.skippedUpdate() != available.version && updater.canAutoInstall() && updater.isUnmetered()
+                ) {
+                    autoAttempt = available.version
+                    updater.install(available, automatic = true)
+                }
+                kotlinx.coroutines.delay(2_000)
+            }
         }
     }
 
@@ -4474,14 +4487,14 @@ private fun UpdatePrompt(
     ) {
         val update = pending ?: return@rememberLauncherForActivityResult
         pending = null
-        if (updater.canInstall()) updater.install(update)
+        if (updater.canInstall()) updater.install(update, automatic = automatic && updater.canAutoInstall())
     }
 
     val downloading = state is Updater.State.Downloading
-    val installing = state is Updater.State.Installing
+    val installing = state is Updater.State.Installing || state is Updater.State.AwaitingApproval
 
     // What the layer below is recorded for; see [sheetsOpen].
-    val showing = !dismissed && !installing
+    val showing = !dismissed && !installing && !(automatic && updater.canAutoInstall())
     LaunchedEffect(showing) { onOpenChange(showing) }
     DisposableEffect(Unit) { onDispose { onOpenChange(false) } }
 

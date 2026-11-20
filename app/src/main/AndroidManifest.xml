@@ -11,12 +11,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Required from API 33 for the playback notification to be visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!--
-      Pulse updates itself: it re-implements Spotify's protocol, so the Play
-      Store is out and its own releases are the only channel there is. The user
-      still confirms every install in Android's own dialog.
-    -->
+    <!-- Android verifies the signature when installing a self-update. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <!--
       Reading the audio already on the phone. Pulse hands downloading to
@@ -73,6 +70,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <!-- A music player, for whatever lists the phone's music apps. -->
                 <category android:name="android.intent.category.APP_MUSIC" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="pulse-app" android:host="oauth" android:path="/complete" />
             </intent-filter>
 
             <!--

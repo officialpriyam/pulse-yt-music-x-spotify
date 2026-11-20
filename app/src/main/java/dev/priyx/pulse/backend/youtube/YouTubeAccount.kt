@@ -3,26 +3,20 @@ package dev.priyx.pulse.backend.youtube
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import dev.priyx.pulse.R
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.YouTubeChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/**
- * The signed-in Google account, for the YouTube Music backend.
- *
- * There is no OAuth here, and that is not a shortcut: YouTube Music has no
- * public API and issues no tokens to third parties. What `music.youtube.com`
- * itself uses is a session cookie plus a `SAPISIDHASH` header derived from it,
- * so signing in means letting the user log into Google in a web view and
- * keeping the cookie it leaves behind — see [YouTubeLoginScreen].
- *
- * Encrypted at rest like the Spotify tokens are: this cookie is full access to
- * the user's Google account, which makes it the most sensitive thing this app
- * stores.
- */
-class YouTubeAccount(context: Context) {
+/** Google-backed YouTube access, with support for existing InnerTube sessions. */
+class YouTubeAccount(private val context: Context) {
+    private val browserGoogle = BrowserGoogle()
+    internal var browserAttempt: BrowserGoogle.Attempt? = null
 
     private val prefs = EncryptedSharedPreferences.create(
         context,
@@ -36,7 +30,35 @@ class YouTubeAccount(context: Context) {
     private val _accountName = MutableStateFlow(prefs.getString(KEY_NAME, null))
     val accountName: StateFlow<String?> = _accountName.asStateFlow()
 
-    val isSignedIn: Boolean get() = prefs.getString(KEY_COOKIE, null) != null
+    private val mobileToken: String? get() = prefs.getString(KEY_MOBILE_TOKEN, null)
+    internal val hasMobileSession: Boolean get() = mobileToken != null
+    internal val hasLegacySession: Boolean get() = prefs.getString(KEY_COOKIE, null) != null
+    val isSignedIn: Boolean get() = hasMobileSession || hasLegacySession
+
+    internal suspend fun beginBrowserSignIn(): BrowserGoogle.Attempt =
+        browserGoogle.begin().also { browserAttempt = it }
+
+    internal suspend fun finishBrowserSignIn(attempt: BrowserGoogle.Attempt): Boolean {
+        val session = browserGoogle.complete(attempt) ?: return false
+        if (browserAttempt != attempt) return false
+        val name = session.name.ifBlank { context.getString(R.string.youtube_account_fallback_name) }
+        withContext(Dispatchers.IO) {
+            check(prefs.edit().clear().putString(KEY_MOBILE_TOKEN, session.token).putString(KEY_NAME, name).commit())
+        }
+        browserAttempt = null
+        _pageId.value = null
+        _expired.value = false
+        _accountName.value = name
+        applyToInnerTube()
+        return true
+    }
+
+    internal suspend fun connectedPlaylists() = browserGoogle.playlists(checkNotNull(mobileToken))
+
+    internal suspend fun connectedTracks(playlist: String?) =
+        browserGoogle.tracks(checkNotNull(mobileToken), playlist)
+
+    internal fun likedPlaylistName(): String = context.getString(R.string.liked_songs)
 
     /**
      * True once the stored session has been refused.
@@ -87,7 +109,7 @@ class YouTubeAccount(context: Context) {
      * as whichever one Google considered active.
      */
     suspend fun channels(): List<YouTubeChannel> =
-        if (!isSignedIn) emptyList() else YouTube.accounts().getOrElse {
+        if (!hasLegacySession) emptyList() else YouTube.accounts().getOrElse {
             android.util.Log.w(TAG, "channel list unavailable: $it")
             emptyList()
         }
@@ -150,44 +172,21 @@ class YouTubeAccount(context: Context) {
         applyToInnerTube()
     }
 
-    /** Hands the stored session back to InnerTube, after a sign-in that was not kept. */
-    fun reapply() = applyToInnerTube()
-
-    fun save(cookie: String, visitorData: String, dataSyncId: String, name: String) {
-        prefs.edit()
-            .putString(KEY_COOKIE, cookie)
-            .putString(KEY_VISITOR_DATA, visitorData)
-            .putString(KEY_DATA_SYNC_ID, dataSyncId)
-            .putString(KEY_NAME, name)
-            // Written before this returns: a sign-in is the one thing worth
-            // waiting for the disk over, and an asynchronous write was lost
-            // when the app stopped straight after it.
-            .commit()
-        _accountName.value = name
-        applyToInnerTube()
-    }
-
-    /**
-     * Keeps the stored session current, and says whether it still works.
-     *
-     * Three things happen here, in the order that matters.
-     *
-     * The cookie first. Google rewrites it as it goes — a new `SID` after a
-     * password change, a refreshed `__Secure-3PSID` — and the web view's own
-     * store is where those land, since InnerTube sends a fixed header and
-     * never reads a `Set-Cookie` back. Copying the web view's copy over the
-     * saved one is what makes a session outlive the day it was created.
-     *
-     * Then `visitorData`, which YouTube expires on its own schedule. It is not
-     * a credential and can simply be asked for again.
-     *
-     * Then the session is used, once, for the cheapest signed-in call there
-     * is. What comes back is the difference between "the library is empty" and
-     * "the account is gone", which is the whole reason to do this at startup
-     * rather than waiting for a page to look broken.
-     */
+    /** Recheck the active transport while keeping sessions across transient outages. */
     suspend fun revalidate() {
-        if (!isSignedIn) return
+        mobileToken?.let { token ->
+            try {
+                _expired.value = !browserGoogle.connected(token)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: BrowserGoogle.Failure) {
+                if (failure.status == 401 || failure.status == 403) _expired.value = true
+            } catch (_: Exception) {
+                // Keep the active session on temporary network failures.
+            }
+            return
+        }
+        if (!hasLegacySession) return
 
         // The cookie is left exactly as the sign-in left it.
         //
@@ -228,26 +227,33 @@ class YouTubeAccount(context: Context) {
             }
     }
 
-    fun signOut() {
+    suspend fun signOut() {
+        val token = mobileToken
         prefs.edit().clear().apply()
+        browserAttempt = null
         _accountName.value = null
+        _pageId.value = null
         _expired.value = false
-        // The web view's store too, or the next sign-in would walk straight
-        // back into the account that was just left.
-        runCatching {
-            android.webkit.CookieManager.getInstance().removeAllCookies(null)
-        }
         applyToInnerTube()
+        if (token != null) {
+            try {
+                browserGoogle.logout(token)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The device has already forgotten the credential.
+            }
+        }
     }
 
     private companion object {
         const val FILE_NAME = "pulse_youtube_account"
         const val KEY_COOKIE = "cookie"
+        const val KEY_MOBILE_TOKEN = "mobile_token"
         const val KEY_VISITOR_DATA = "visitor_data"
         const val KEY_DATA_SYNC_ID = "data_sync_id"
         const val KEY_NAME = "name"
         const val KEY_PAGE_ID = "page_id"
-        const val MUSIC_URL = "https://music.youtube.com"
         const val TAG = "PulseYouTubeAccount"
     }
 }

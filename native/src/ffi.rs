@@ -1011,6 +1011,17 @@ pub extern "system" fn Java_dev_priyx_pulse_nativecore_NativeBridge_nativeDownlo
     })
 }
 
+/// Fills the existing playback cache for an upcoming queue track.
+#[no_mangle]
+pub extern "system" fn Java_dev_priyx_pulse_nativecore_NativeBridge_nativeWarmTrack(
+    mut env: JNIEnv,
+    _class: JClass,
+    track_uri: JString,
+) -> jboolean {
+    let uri = read_string(&mut env, &track_uri);
+    guard(&mut env, "WarmTrack", || downloads::warm_track(&uri?)) as jboolean
+}
+
 /// The sidecar of a downloaded track as JSON, or `null` if it is not here.
 #[no_mangle]
 pub extern "system" fn Java_dev_priyx_pulse_nativecore_NativeBridge_nativeDownloadState(

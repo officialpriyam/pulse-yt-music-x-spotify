@@ -138,7 +138,17 @@ class PlaybackService : MediaLibraryService() {
     private var autoplayInFlight = false
     private var lastAutoplayTrackUri: String? = null
 
+    private val upcomingCache by lazy { UpcomingCache(this, container.downloadSettings, scope) }
+
     private val buttonsListener = object : androidx.media3.common.Player.Listener {
+        override fun onEvents(observed: androidx.media3.common.Player, events: androidx.media3.common.Player.Events) {
+            if (observed != player) return
+            val local = playerKind == PlayerKind.YOUTUBE || (
+                playerKind == PlayerKind.SPOTIFY && !dev.priyx.pulse.data.RemoteConnect.elsewhereActive.value
+            )
+            upcomingCache.update(observed, local)
+        }
+
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) = redrawButtons()
 
         override fun onRepeatModeChanged(repeatMode: Int) = redrawButtons()

@@ -690,6 +690,9 @@ object NativeBridge {
     private external fun nativeSetNetworkGone(gone: Boolean)
     private external fun nativeSetDownloadRoot(path: String)
     private external fun nativeDownloadTrack(trackUri: String, bitrateKbps: Int): String
+    fun warmTrack(trackUri: String): Boolean = nativeWarmTrack(trackUri)
+
+    private external fun nativeWarmTrack(trackUri: String): Boolean
     private external fun nativeDownloadState(trackUri: String): String
     private external fun nativeRemoveDownload(trackUri: String)
     private external fun nativeCancelDownload(trackUri: String)

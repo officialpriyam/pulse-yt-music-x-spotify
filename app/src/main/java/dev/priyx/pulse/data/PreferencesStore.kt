@@ -448,6 +448,14 @@ class PreferencesStore(context: Context) {
             .apply()
     }
 
+    private val _automaticUpdates = MutableStateFlow(prefs.getBoolean(KEY_AUTOMATIC_UPDATES, true))
+    val automaticUpdates: StateFlow<Boolean> = _automaticUpdates.asStateFlow()
+
+    fun setAutomaticUpdates(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTOMATIC_UPDATES, enabled).apply()
+        _automaticUpdates.value = enabled
+    }
+
     fun lastUpdateCheck(): Long = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
 
     fun setLastUpdateCheck(value: Long) {
@@ -507,6 +515,7 @@ class PreferencesStore(context: Context) {
         const val KEY_BACKEND = "backend"
         const val KEY_PROFILE_NAME = "profile_name"
         const val KEY_PROFILE_ART = "profile_art"
+        const val KEY_AUTOMATIC_UPDATES = "automatic_updates"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         const val KEY_SKIPPED_UPDATE = "skipped_update"
         const val KEY_USER_COUNTRY = "user_country"

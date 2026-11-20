@@ -18,7 +18,7 @@ Register the callbacks on the Next.js site's origin. Use the local equivalents f
 
 | Provider | Setup | Callback paths |
 | --- | --- | --- |
-| Google and YouTube | Create a Google OAuth **Web application** client. Configure consent and test users, and enable YouTube Data API v3 for the music connection. | `/auth/google/callback`, `/auth/youtube/callback` |
+| Google and YouTube | Create a Google OAuth **Web application** client. Configure consent and test users, and enable YouTube Data API v3 for the music connection. | `/auth/google/callback`, `/auth/youtube/callback`, `/auth/android/google/callback` |
 | Discord | Create a Discord application in the Developer Portal and register the OAuth2 redirect. | `/auth/discord/callback` |
 | Spotify | Register a Spotify app with Web API and Web Playback SDK. Add your test users if the app is in Development Mode. | `/auth/spotify/callback` |
 
@@ -119,10 +119,12 @@ Search, playlists and playlist items accept `page_token` from the previous respo
 
 Postgres stores accounts, Argon2id password hashes, OAuth state, sessions, provider connections, liked tracks, and Pulse playlists. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned by the maintenance command. The browser holds HTTP-only cookies.
 
-The Android app talks directly to its music providers. Its public Pulse API origin is set in `gradle.properties`. To test a different backend with the readiness check in **Settings → About**, pass its origin when building.
+Android Google sign-in opens the system browser. Its Google callback is on the public browser origin and finishes with a link back to Pulse. The phone completes the session over HTTPS by proving it initiated the request. An Android OAuth session lasts 30 days and is stored encrypted on the phone. This connection reads the account’s YouTube playlists and liked videos. Google OAuth and YouTube Data API v3 must be enabled for this feature.
+
+Android playback still talks directly to its music services. Its public Pulse API origin is set in `gradle.properties`. To test a different backend with the readiness check in **Settings → About**, pass its origin when building.
 
 ```sh
 ./gradlew :app:assembleDev -PpulseBackendUrl=https://YOUR-BACKEND-DOMAIN
 ```
 
-The check calls `/healthz` when tapped and reports whether the service and its dependencies are ready. The About row appears on builds configured with a backend URL. Android sign-in and library sync would require a mobile login flow. The web integration uses public YouTube APIs for browsing and library management.
+The check calls `/healthz` when tapped and reports whether the service and its dependencies are ready. The About row appears on builds configured with a backend URL. The web integration uses public YouTube APIs for browsing and library management.

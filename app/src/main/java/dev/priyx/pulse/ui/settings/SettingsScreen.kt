@@ -154,7 +154,7 @@ fun SettingsScreen(
     language: String,
     onLanguage: (String) -> Unit,
     onBack: () -> Unit,
-    /** Opens the Google sign-in web view; see YouTubeLoginScreen. */
+    /** Opens Google sign-in in the system browser; see YouTubeLoginScreen. */
     onYouTubeSignIn: () -> Unit = {},
     /** After switching channel: the library and the home belong to the new one. */
     onYouTubeChannelChange: () -> Unit = {},
@@ -924,6 +924,22 @@ fun SettingsScreen(
         // page somebody comes to do rather than to read.
         if (shown == SettingsPage.About) item("update") {
             Section(null) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    val automaticUpdates by app.preferences.automaticUpdates.collectAsStateWithLifecycle()
+                    DownloadSwitch(
+                        label = stringResource(R.string.update_automatic),
+                        checked = automaticUpdates,
+                        backdrop = backdrop,
+                        onChange = app.preferences::setAutomaticUpdates,
+                    )
+                    Text(
+                        stringResource(R.string.update_automatic_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = InkDim,
+                        modifier = Modifier.padding(start = ROW_TEXT_START, end = 18.dp, bottom = 14.dp),
+                    )
+                    RowDivider()
+                }
                 UpdateRow(askToInstall)
             }
         }
@@ -1894,6 +1910,7 @@ private fun UpdateRow(onNeedsPermission: (Updater.State.Available) -> Unit) {
         is Updater.State.Downloading ->
             current.progress?.let { "${(it * 100).toInt()}%" } ?: stringResource(R.string.update_downloading)
         is Updater.State.Installing -> stringResource(R.string.update_installing)
+        is Updater.State.AwaitingApproval -> stringResource(R.string.update_approval)
         is Updater.State.Failed ->
             if (current.reason == Updater.REASON_PERMISSION) stringResource(R.string.update_needs_permission)
             else stringResource(R.string.update_failed)
@@ -1901,7 +1918,7 @@ private fun UpdateRow(onNeedsPermission: (Updater.State.Available) -> Unit) {
 
     val busy = state is Updater.State.Checking ||
         state is Updater.State.Downloading ||
-        state is Updater.State.Installing
+        state is Updater.State.Installing || state is Updater.State.AwaitingApproval
 
     Row(
         Modifier
@@ -2048,6 +2065,21 @@ private fun DownloadsSection(
             checked = wifiOnly,
             backdrop = backdrop,
             onChange = settings::setWifiOnly,
+        )
+
+        RowDivider()
+        val cacheUpcoming by settings.cacheUpcoming.collectAsStateWithLifecycle()
+        DownloadSwitch(
+            label = stringResource(R.string.cache_upcoming_tracks),
+            checked = cacheUpcoming,
+            backdrop = backdrop,
+            onChange = settings::setCacheUpcoming,
+        )
+        Text(
+            stringResource(R.string.cache_upcoming_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = InkDim,
+            modifier = Modifier.padding(start = ROW_TEXT_START, end = 18.dp, bottom = 14.dp),
         )
 
         // Spotify's Liked Songs, which the switch keeps downloaded.

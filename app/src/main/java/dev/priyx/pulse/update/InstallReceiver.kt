@@ -1,50 +1,68 @@
 package dev.priyx.pulse.update
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.Build
+import dev.priyx.pulse.PulseApplication
+import dev.priyx.pulse.R
 
-/**
- * Carries the installer's answer back.
- *
- * The first thing a session reports is [PackageInstaller.STATUS_PENDING_USER_ACTION],
- * and the intent inside it *is* the confirmation dialog: without starting it the
- * install waits for an approval nobody is ever asked for, which looks exactly
- * like a download that silently did nothing.
- */
+/** Delivers the installer result and surfaces confirmation on devices that require it. */
 class InstallReceiver : BroadcastReceiver() {
-
     override fun onReceive(context: Context, intent: Intent) {
+        val updater = (context.applicationContext as PulseApplication).updater
         when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -1)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                val confirm = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                val confirm = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
                 }
-                confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                confirm?.let(context::startActivity)
+                if (confirm != null) {
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    updater.awaitingApproval(confirm)
+                    showPrompt(context, confirm)
+                } else {
+                    updater.installAbandoned()
+                }
             }
-
-            PackageInstaller.STATUS_SUCCESS ->
-                android.util.Log.i(TAG, "update installed")
-
+            PackageInstaller.STATUS_SUCCESS -> cancelPrompt(context)
             else -> {
-                // The message names the package and the failure, nothing the
-                // user typed.
-                val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-                android.util.Log.w(TAG, "install did not complete: $message")
-                // So the update is offered again; see Updater.installAbandoned.
-                (context.applicationContext as? dev.priyx.pulse.PulseApplication)
-                    ?.updater
-                    ?.installAbandoned()
+                cancelPrompt(context)
+                updater.installAbandoned()
             }
         }
     }
 
-    private companion object {
-        const val TAG = "InstallReceiver"
+    private fun showPrompt(context: Context, confirm: Intent) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (!manager.areNotificationsEnabled()) return
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL, context.getString(R.string.update_channel), NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        val pending = PendingIntent.getActivity(
+            context, PROMPT, confirm, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        manager.notify(PROMPT, Notification.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(context.getString(R.string.update_approval))
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build())
+    }
+
+    companion object {
+        private const val CHANNEL = "pulse_update_approval"
+        private const val PROMPT = 4_202
+
+        fun cancelPrompt(context: Context) {
+            context.getSystemService(NotificationManager::class.java).cancel(PROMPT)
+        }
     }
 }
