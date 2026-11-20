@@ -1,0 +1,28 @@
+[package]
+name = "pulse-api"
+version = "0.1.0"
+edition = "2024"
+authors = ["priyx"]
+license = "GPL-3.0-only"
+default-run = "pulse-api"
+
+[[bin]]
+name = "vercel"
+path = "api/vercel.rs"
+
+[dependencies]
+aes-gcm = "0.10"
+axum = "0.8"
+base64 = "0.22"
+deadpool-postgres = "0.14"
+dotenvy = "0.15"
+getrandom = "0.3"
+native-tls = "0.2"
+postgres-native-tls = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
+tower = "0.5"
+vercel_runtime = { version = "2.4", features = ["axum"] }
