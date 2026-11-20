@@ -29,23 +29,27 @@ internal object BackendHealth {
 
         try {
             probe.newCall(request).execute().use { response ->
-                if (response.code != 200) return@use Result.Unavailable
-                parse(response.peekBody(4096).string())
+                if (response.code != 200 && response.code != 503) return@use Result.Unavailable
+                parse(response.peekBody(4096).string(), response.code)
             }
         } catch (_: IOException) {
             Result.Unavailable
         }
     }
 
-    internal fun parse(body: String): Result {
+    internal fun parse(body: String, status: Int = 200): Result {
         val health = try {
             JSONObject(body)
         } catch (_: JSONException) {
             return Result.Unavailable
         }
-        if (health.optString("service") != "pulse-api" || health.optString("status") != "ok") {
-            return Result.Unavailable
+        if (health.optString("service") != "pulse-api") return Result.Unavailable
+        if (status == 503 && health.optString("status") == "configuration_required" &&
+            health.opt("configured") == false
+        ) {
+            return Result.SetupRequired
         }
+        if (status != 200 || health.optString("status") != "ok") return Result.Unavailable
         return when (health.opt("configured")) {
             true -> Result.Ready
             false -> Result.SetupRequired

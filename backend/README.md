@@ -42,6 +42,11 @@ Use a backend domain the web project can reach. If Deployment Protection interce
 
 [Vercel Rust runtime](https://vercel.com/docs/functions/runtimes/rust) · [Vercel Postgres integrations](https://vercel.com/docs/postgres) · [Google OAuth web server flow](https://developers.google.com/identity/protocols/oauth2/web-server)
 
+If the hosted function returns `503 configuration_required`, open Vercel **Runtime Logs** for
+the deployment. The initialization error names the missing or invalid setting. Update the
+backend project's **Production** environment variables and create a new deployment. A successful
+build and a ready backend are separate checks.
+
 ## Run locally
 
 Install Rust and Cargo. On Linux, install the OpenSSL development headers and pkg-config. Start the API from this folder so it loads `.env`.
@@ -96,7 +101,7 @@ Search, playlists and playlist items accept `page_token` from the previous respo
 
 Postgres stores OAuth state, accounts, sessions and saved video IDs. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned by the maintenance command. The browser holds HTTP-only cookies.
 
-The Android app talks directly to its music providers. To add a readiness check in **Settings → About**, build Android with the public backend origin.
+The Android app talks directly to its music providers. Its public Pulse API origin is set in `gradle.properties`. To test a different backend with the readiness check in **Settings → About**, pass its origin when building.
 
 ```sh
 ./gradlew :app:assembleDev -PpulseBackendUrl=https://YOUR-BACKEND-DOMAIN

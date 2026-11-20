@@ -104,15 +104,30 @@ impl Google {
             env_value("PULSE_TOKEN_KEY"),
         );
         let (id, secret, database, key) = match config {
-            (None, None, None, None) if !production
+            (None, None, None, None)
+                if !production
                     && env_value("REDIS_URL").is_none()
                     && env_value("UPSTASH_REDIS_REST_URL").is_none()
-                    && env_value("UPSTASH_REDIS_REST_TOKEN").is_none() => return Ok(None),
+                    && env_value("UPSTASH_REDIS_REST_TOKEN").is_none() =>
+            {
+                return Ok(None);
+            }
             (Some(id), Some(secret), Some(database), Some(key)) => (id, secret, database, key),
-            _ => return Err("Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, a Postgres URL and PULSE_TOKEN_KEY together".into()),
+            (id, secret, database, key) => {
+                let missing: Vec<_> = [
+                    (id.is_none(), "GOOGLE_CLIENT_ID"),
+                    (secret.is_none(), "GOOGLE_CLIENT_SECRET"),
+                    (database.is_none(), "DATABASE_URL_POOLED or DATABASE_URL"),
+                    (key.is_none(), "PULSE_TOKEN_KEY"),
+                ]
+                .into_iter()
+                .filter_map(|(missing, variable)| missing.then_some(variable))
+                .collect();
+                return Err(format!("Missing backend settings: {}", missing.join(", ")).into());
+            }
         };
-        let base = Url::parse(&env::var("PULSE_PUBLIC_URL")?)
-            .map_err(|_| "PULSE_PUBLIC_URL is invalid")?;
+        let origin = env_value("PULSE_PUBLIC_URL").ok_or("PULSE_PUBLIC_URL is required")?;
+        let base = Url::parse(&origin).map_err(|_| "PULSE_PUBLIC_URL is invalid")?;
         let local = matches!(base.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
         if (base.scheme() != "https" && (production || !local || base.scheme() != "http"))
             || base.host_str().is_none()
@@ -903,6 +918,10 @@ pub fn router() -> Result<Router, AnyError> {
         inflight: Semaphore::new(env_limit("PULSE_MAX_INFLIGHT", 32, 1, 256)? as usize),
     });
     Ok(Router::new()
+        .route(
+            "/",
+            get(|| async { Json(json!({ "service": "pulse-api", "health": "/healthz" })) }),
+        )
         .route("/healthz", get(health))
         .route("/auth/google/login", get(login))
         .route(CALLBACK, get(callback))

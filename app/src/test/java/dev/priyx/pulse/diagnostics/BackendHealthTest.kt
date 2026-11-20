@@ -21,6 +21,17 @@ class BackendHealthTest {
     }
 
     @Test
+    fun recognizesDeployedBackendMissingConfiguration() {
+        assertEquals(
+            BackendHealth.Result.SetupRequired,
+            BackendHealth.parse(
+                """{"service":"pulse-api","status":"configuration_required","configured":false}""",
+                status = 503,
+            ),
+        )
+    }
+
+    @Test
     fun rejectsUnrelatedOrInvalidReadinessResponses() {
         val bodies = listOf(
             """{"service":"other","status":"ok","configured":true}""",
