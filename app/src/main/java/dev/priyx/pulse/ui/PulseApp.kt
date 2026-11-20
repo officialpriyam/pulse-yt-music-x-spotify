@@ -133,8 +133,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntOffset
 import dev.priyx.pulse.ui.components.TrackSheet
 import dev.priyx.pulse.ui.components.TrackSheetAction
-import dev.priyx.pulse.ui.components.UpdateSheet
-import dev.priyx.pulse.update.Updater
 import dev.priyx.pulse.ui.library.openLink
 import com.adamglin.phosphoricons.regular.Download
 import com.adamglin.phosphoricons.regular.LinkSimple
@@ -1642,9 +1640,8 @@ fun PulseApp(
                 // counted here too: the layer below is only recorded while
                 // something is reading it, and a panel over an unrecorded
                 // backdrop has nothing to refract — it came out flat.
-                var updateOpen by remember { mutableStateOf(false) }
                 val sheetsOpen = trackMenu != null || addToPlaylist.open || playlistMenu != null ||
-                    sharedTrack != null || friendsOpen || updateOpen || sheetHost.open
+                    sharedTrack != null || friendsOpen || sheetHost.open
                 // Kept on a little past the close, or the layer would stop
                 // being recorded while the sheet is still fading out over it
                 // and the panel would go black on the way down.
@@ -4030,11 +4027,7 @@ fun PulseApp(
                 // Here rather than at the top of the app: a sheet made of
                 // glass has to be drawn where there is a layer to refract, and
                 // this is the layer the other sheets use.
-                UpdatePrompt(
-                    backdrop = overlayBackdrop,
-                    allowAutomatic = player != null && !local.wantsPlay && !local.isPlaying && !showYouTubeLogin,
-                    onOpenChange = { updateOpen = it },
-                )
+
 
                 AddToPlaylistSheet(
                     state = addToPlaylist,
@@ -4404,127 +4397,6 @@ private fun Player.cycleRepeatMode() {
         else -> Player.REPEAT_MODE_OFF
     }
 }
-
-/** Periodically checks GitHub and installs available updates when the phone can do so. */
-@Composable
-private fun UpdatePrompt(
-    backdrop: dev.priyx.pulse.ui.glass.backdrop.Backdrop,
-    allowAutomatic: Boolean,
-    onOpenChange: (Boolean) -> Unit,
-) {
-    val context = LocalContext.current
-    val updater = remember(context) {
-        (context.applicationContext as dev.priyx.pulse.PulseApplication).updater
-    }
-    val prefs = (context.applicationContext as dev.priyx.pulse.PulseApplication).preferences
-    val automatic by prefs.automaticUpdates.collectAsStateWithLifecycle()
-    val allowed by rememberUpdatedState(allowAutomatic && automatic)
-    var autoAttempt by rememberSaveable { mutableStateOf<String?>(null) }
-    val state by updater.state.collectAsStateWithLifecycle()
-
-    // Each time the app comes to the front, not only when it is launched. A
-    // music app is rarely launched: it stays in the background between
-    // listens, so a check made only at launch could wait days for the next
-    // one and the release went by unannounced.
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
-            val now = System.currentTimeMillis()
-            if (now - prefs.lastUpdateCheck() < UPDATE_CHECK_INTERVAL_MS) return@repeatOnLifecycle
-            // Recorded before the call rather than after it: a phone with no
-            // network would otherwise ask again at every launch, which is the
-            // one shape of this that would be a nuisance.
-            prefs.setLastUpdateCheck(now)
-            runCatching { updater.check() }
-        }
-    }
-
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-            updater.state.collect { current ->
-                if (current is Updater.State.AwaitingApproval) {
-                    runCatching { context.startActivity(current.intent) }
-                        .onSuccess {
-                            updater.approvalOpened()
-                            dev.priyx.pulse.update.InstallReceiver.cancelPrompt(context)
-                        }
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-            while (true) {
-                val available = updater.state.value as? Updater.State.Available
-                if (allowed && available != null && autoAttempt != available.version &&
-                    prefs.skippedUpdate() != available.version && updater.canAutoInstall() && updater.isUnmetered()
-                ) {
-                    autoAttempt = available.version
-                    updater.install(available, automatic = true)
-                }
-                kotlinx.coroutines.delay(2_000)
-            }
-        }
-    }
-
-    // Held while the download runs: the state moves on from Available the
-    // moment the fetch starts, and the sheet has to stay to show it happening.
-    var offered by remember { mutableStateOf<Updater.State.Available?>(null) }
-    var dismissed by remember { mutableStateOf(false) }
-    (state as? Updater.State.Available)?.let { found ->
-        // Already offered, and turned down. The version is remembered rather
-        // than a flag, so the next release is news again.
-        if (found.version != prefs.skippedUpdate()) offered = found
-    }
-    val available = offered ?: return
-
-    // Held across the trip to the system settings, so granting the permission
-    // continues the install instead of dropping it.
-    var pending by remember { mutableStateOf<Updater.State.Available?>(null) }
-    val permission = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) {
-        val update = pending ?: return@rememberLauncherForActivityResult
-        pending = null
-        if (updater.canInstall()) updater.install(update, automatic = automatic && updater.canAutoInstall())
-    }
-
-    val downloading = state is Updater.State.Downloading
-    val installing = state is Updater.State.Installing || state is Updater.State.AwaitingApproval
-
-    // What the layer below is recorded for; see [sheetsOpen].
-    val showing = !dismissed && !installing && !(automatic && updater.canAutoInstall())
-    LaunchedEffect(showing) { onOpenChange(showing) }
-    DisposableEffect(Unit) { onDispose { onOpenChange(false) } }
-
-    UpdateSheet(
-        version = available.version,
-        size = available.bytes.takeIf { it > 0 }?.let { "%.1f MB".format(it / 1_000_000.0) },
-        notes = available.notes,
-        progress = (state as? Updater.State.Downloading)?.progress,
-        downloading = downloading,
-        onInstall = {
-            if (updater.canInstall()) {
-                updater.install(available)
-            } else {
-                pending = available
-                permission.launch(updater.permissionIntent())
-            }
-        },
-        onDismiss = {
-            prefs.setSkippedUpdate(available.version)
-            dismissed = true
-        },
-        backdrop = backdrop,
-        // Gone once the system installer has it: what happens next is Android's
-        // dialog, and two things asking about the same install is one too many.
-        visible = showing,
-    )
-}
-
-/** At most one check every six hours, however often the app is opened. */
-private const val UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
 
 private fun savedPlaybackSeed(context: android.content.Context): PlaybackState? {
     val saved = dev.priyx.pulse.data.PlaybackStore(context).load() ?: return null

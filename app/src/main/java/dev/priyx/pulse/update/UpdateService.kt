@@ -29,7 +29,6 @@ class UpdateService : Service() {
         val bytes = intent?.getLongExtra(EXTRA_BYTES, 0L) ?: 0L
 
         val sha256 = intent?.getStringExtra(EXTRA_SHA256).orEmpty()
-        val automatic = intent?.getBooleanExtra(EXTRA_AUTOMATIC, false) ?: false
         if (url.isNullOrEmpty() || running) return START_NOT_STICKY
         running = true
 
@@ -39,7 +38,8 @@ class UpdateService : Service() {
         val updater = (applicationContext as PulseApplication).updater
         scope.launch {
             try {
-                updater.fetchAndInstall(url, version, bytes, sha256, automatic) { progress ->
+                val update = Updater.State.Available(version, url, bytes, sha256 = sha256)
+                updater.fetchAndInstall(update) { progress ->
                     notify(version, progress)
                 }
             } finally {
@@ -97,16 +97,14 @@ class UpdateService : Service() {
         private const val EXTRA_VERSION = "version"
         private const val EXTRA_BYTES = "bytes"
         private const val EXTRA_SHA256 = "sha256"
-        private const val EXTRA_AUTOMATIC = "automatic"
 
         /** Starts the download; safe to call twice, the second is ignored. */
-        fun start(context: Context, update: Updater.State.Available, automatic: Boolean) {
+        fun start(context: Context, update: Updater.State.Available) {
             val intent = Intent(context, UpdateService::class.java)
                 .putExtra(EXTRA_URL, update.url)
                 .putExtra(EXTRA_VERSION, update.version)
                 .putExtra(EXTRA_BYTES, update.bytes)
                 .putExtra(EXTRA_SHA256, update.sha256)
-                .putExtra(EXTRA_AUTOMATIC, automatic)
             context.startForegroundService(intent)
         }
     }

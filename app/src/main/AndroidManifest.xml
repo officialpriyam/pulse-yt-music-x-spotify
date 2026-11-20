@@ -12,6 +12,7 @@
     <!-- Required from API 33 for the playback notification to be visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android verifies the signature when installing a self-update. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
@@ -125,6 +126,11 @@
             android:name=".download.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".update.AutomaticUpdateJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <service
             android:name=".update.UpdateService"

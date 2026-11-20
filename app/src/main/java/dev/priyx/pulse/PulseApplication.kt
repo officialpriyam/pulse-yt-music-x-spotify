@@ -15,6 +15,7 @@ import dev.priyx.pulse.data.PreferencesStore
 import kotlinx.coroutines.launch
 import dev.priyx.pulse.data.RecentStore
 import dev.priyx.pulse.playback.EffectPresetStore
+import dev.priyx.pulse.update.AutomaticUpdateJob
 import dev.priyx.pulse.data.ApiFactory
 import dev.priyx.pulse.data.SpotifyApi
 import okhttp3.ConnectionPool
@@ -136,6 +137,12 @@ class PulseApplication : Application(), ImageLoaderFactory {
         ).launch {
             preferences.backend.collect {
                 dev.priyx.pulse.playback.websdk.WebSdkRecovery.refresh(this@PulseApplication)
+            }
+        }
+
+        offlineScope.launch {
+            preferences.automaticUpdates.collect { enabled ->
+                AutomaticUpdateJob.configure(this@PulseApplication, enabled)
             }
         }
 

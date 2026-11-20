@@ -25,6 +25,8 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
 import dev.priyx.pulse.data.CatalogTrack
 import dev.priyx.pulse.playback.PlaybackService
+import dev.priyx.pulse.update.InstallReceiver
+import dev.priyx.pulse.update.Updater
 
 /**
  * Owns the connection to the playback service; everything visual lives in
@@ -104,6 +106,20 @@ class MainActivity : ComponentActivity() {
                         startActivity(android.content.Intent(this@MainActivity,
                             dev.priyx.pulse.playback.websdk.WebSdkActivity::class.java)
                             .putExtra("recovery", true))
+                    }
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            val updater = (application as dev.priyx.pulse.PulseApplication).updater
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                updater.state.collect { state ->
+                    if (state is Updater.State.AwaitingApproval) {
+                        runCatching { startActivity(state.intent) }.onSuccess {
+                            updater.approvalOpened()
+                            InstallReceiver.cancelPrompt(this@MainActivity)
+                        }
                     }
                 }
             }

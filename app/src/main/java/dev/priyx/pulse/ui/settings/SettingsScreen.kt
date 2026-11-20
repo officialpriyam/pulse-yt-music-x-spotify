@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.priyx.pulse.update.Updater
+import dev.priyx.pulse.update.AutomaticUpdateJob
 import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -233,12 +234,17 @@ fun SettingsScreen(
         (context.applicationContext as dev.priyx.pulse.PulseApplication).updater
     }
     var pendingUpdate by remember { mutableStateOf<Updater.State.Available?>(null) }
+    var updatePermission by remember { mutableStateOf(updater.canInstall()) }
     val installPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
-        val update = pendingUpdate ?: return@rememberLauncherForActivityResult
+        val update = pendingUpdate
         pendingUpdate = null
-        scope.launch { if (updater.canInstall()) updater.install(update) }
+        updatePermission = updater.canInstall()
+        if (updatePermission) {
+            if (update != null) updater.install(update)
+            else if (app.preferences.automaticUpdates.value) AutomaticUpdateJob.request(context)
+        }
     }
     val askToInstall: (Updater.State.Available) -> Unit = { update ->
         pendingUpdate = update
@@ -938,6 +944,15 @@ fun SettingsScreen(
                         color = InkDim,
                         modifier = Modifier.padding(start = ROW_TEXT_START, end = 18.dp, bottom = 14.dp),
                     )
+                    if (automaticUpdates && !updatePermission) {
+                        Text(
+                            stringResource(R.string.update_allow_installs),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable { installPermission.launch(updater.permissionIntent()) }
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                        )
+                    }
                     RowDivider()
                 }
                 UpdateRow(askToInstall)
@@ -1912,8 +1927,11 @@ private fun UpdateRow(onNeedsPermission: (Updater.State.Available) -> Unit) {
         is Updater.State.Installing -> stringResource(R.string.update_installing)
         is Updater.State.AwaitingApproval -> stringResource(R.string.update_approval)
         is Updater.State.Failed ->
-            if (current.reason == Updater.REASON_PERMISSION) stringResource(R.string.update_needs_permission)
-            else stringResource(R.string.update_failed)
+            when (current.reason) {
+                Updater.REASON_PERMISSION -> stringResource(R.string.update_needs_permission)
+                Updater.REASON_CONFIRMATION -> stringResource(R.string.update_manual_confirmation)
+                else -> stringResource(R.string.update_failed)
+            }
     }
 
     val busy = state is Updater.State.Checking ||

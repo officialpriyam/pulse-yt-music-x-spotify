@@ -4,6 +4,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
+import android.content.pm.PackageInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -13,6 +15,9 @@ import androidx.core.content.pm.PackageInfoCompat
 import dev.priyx.pulse.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +37,7 @@ class Updater(context: Context) {
     private val app = context.applicationContext
     private val json = Json { ignoreUnknownKeys = true }
     private val client = OkHttpClient.Builder().followSslRedirects(false).build()
+    private val preferences = app.getSharedPreferences("pulse_update_install", Context.MODE_PRIVATE)
 
     /** The last whole percent handed to the notification; see [download]. */
     private var lastReported = -1
@@ -141,7 +147,7 @@ class Updater(context: Context) {
         }
     }
 
-    fun install(update: State.Available, automatic: Boolean = false) {
+    fun install(update: State.Available) {
         if (_state.value.isBusy()) return
         lastOffered = update
         if (!canInstall()) {
@@ -154,49 +160,75 @@ class Updater(context: Context) {
         // app — or merely opening the player — cancelled the download halfway
         // with nothing to show for it. See UpdateService.
         _state.value = State.Downloading(null)
-        runCatching { UpdateService.start(app, update, automatic) }
+        runCatching { UpdateService.start(app, update) }
             .onFailure { _state.value = State.Failed("Could not start update") }
     }
 
-    /**
-     * The download itself, called by the service that is allowed to finish it.
-     *
-     * @param onProgress told as often as the bytes arrive, so the notification
-     *   can say how far along it is; null while the server sends no length.
-     */
-    suspend fun fetchAndInstall(
-        url: String,
-        version: String,
-        bytes: Long,
-        sha256: String,
-        automatic: Boolean,
-        onProgress: (Float?) -> Unit,
-    ) {
-        val update = State.Available(version, url, bytes, sha256 = sha256)
-        _state.value = State.Downloading(null)
-        onProgress(null)
-
-        val apk = runCatching {
-            withContext(Dispatchers.IO) { download(update, onProgress) }
-        }.getOrElse {
-            File(app.cacheDir, "update.apk").delete()
-            if (it is CancellationException) throw it
-            android.util.Log.w(TAG, "download failed: $it")
-            _state.value = State.Failed(it.message ?: "download")
-            return
+    /** Returns whether Android should retry this automatic job. */
+    internal suspend fun runAutomatic(allowed: () -> Boolean): Boolean {
+        if (!canAutoInstall() || !isUnmetered() || _state.value.isBusy()) return false
+        if (!allowed()) return true
+        check()
+        val result = _state.value
+        if (result is State.Failed) return result.reason != REASON_CONFIRMATION
+        val update = result as? State.Available ?: return false
+        if (preferences.getString(BLOCKED_VERSION, null) == update.version) {
+            _state.value = State.Failed(REASON_CONFIRMATION)
+            return false
         }
-
-        _state.value = State.Installing
-        runCatching { withContext(Dispatchers.IO) { commit(apk, automatic) } }
-            .onFailure {
-                if (it is CancellationException) throw it
-                android.util.Log.w(TAG, "install failed: $it")
-                _state.value = State.Failed(it.message ?: "install")
-            }
-        apk.delete()
+        if (!allowed()) return true
+        lastOffered = update
+        return fetchAndInstall(
+            update,
+            automatic = true,
+            canContinue = { allowed() && canAutoInstall() && isUnmetered() },
+        ) {}
     }
 
-    private fun download(update: State.Available, onProgress: (Float?) -> Unit): File {
+    internal suspend fun fetchAndInstall(
+        update: State.Available,
+        automatic: Boolean = false,
+        canContinue: () -> Boolean = { true },
+        onProgress: (Float?) -> Unit,
+    ): Boolean {
+        _state.value = State.Downloading(null)
+        onProgress(null)
+        val temporary = File(app.cacheDir, "update.apk")
+        var committed = false
+        try {
+            withContext(Dispatchers.IO) {
+                download(update, onProgress)
+                currentCoroutineContext().ensureActive()
+                if (!canContinue()) throw InstallDeferred()
+                _state.value = State.Installing
+                val coroutine = currentCoroutineContext()
+                commit(temporary, update.version, automatic) { coroutine.isActive && canContinue() }
+                committed = true
+            }
+            return false
+        } catch (cancelled: CancellationException) {
+            if (!committed) _state.value = State.Idle
+            throw cancelled
+        } catch (_: InstallDeferred) {
+            _state.value = State.Idle
+            return true
+        } catch (invalid: InvalidApk) {
+            android.util.Log.w(TAG, "Rejected update: ${invalid.message}")
+            _state.value = State.Failed("Invalid update package")
+            return false
+        } catch (failure: Exception) {
+            android.util.Log.w(TAG, "Update failed", failure)
+            _state.value = State.Failed(failure.message ?: "update")
+            return true
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private class InstallDeferred : Exception()
+    private class InvalidApk(message: String) : Exception(message)
+
+    private suspend fun download(update: State.Available, onProgress: (Float?) -> Unit) {
         // cacheDir, not filesDir: once the installer has read it the file is
         // dead weight, and twenty megabytes is worth letting the system reclaim
         // if the install never happens.
@@ -217,6 +249,7 @@ class Updater(context: Context) {
                 target.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
+                        currentCoroutineContext().ensureActive()
                         val read = input.read(buffer)
                         if (read < 0) break
                         written += read
@@ -241,17 +274,42 @@ class Updater(context: Context) {
             }
         }
         val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
-        check(target.length() == update.bytes && actual == update.sha256) { "Update download failed verification" }
-        return target
+        if (target.length() != update.bytes || actual != update.sha256) {
+            throw InvalidApk("Release size or checksum mismatch")
+        }
     }
 
-    private fun commit(apk: File, automatic: Boolean) {
-        @Suppress("DEPRECATION")
-        val candidate = app.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
-        check(candidate != null && candidate.packageName == app.packageName &&
-            PackageInfoCompat.getLongVersionCode(candidate) > BuildConfig.VERSION_CODE) {
-            "The APK is not an update for Pulse"
+    @Suppress("DEPRECATION")
+    private fun verifyPackage(apk: File, version: String) {
+        val modern = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+        val flags = if (modern) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val candidate = app.packageManager.getPackageArchiveInfo(apk.absolutePath, flags)
+            ?: throw InvalidApk("Could not read package")
+        if (candidate.packageName != app.packageName || candidate.versionName != version ||
+            PackageInfoCompat.getLongVersionCode(candidate) <= BuildConfig.VERSION_CODE
+        ) {
+            throw InvalidApk("Wrong application or version")
         }
+        if (signerDigests(candidate) != setOf(RELEASE_CERT)) {
+            throw InvalidApk("Release signature mismatch")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun signerDigests(info: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners
+        } else {
+            info.signatures
+        }
+        return signatures.orEmpty().mapTo(mutableSetOf()) { signature ->
+            MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte) }
+        }
+    }
+
+    private fun commit(apk: File, version: String, automatic: Boolean, canContinue: () -> Boolean) {
+        verifyPackage(apk, version)
         val installer = app.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(
             PackageInstaller.SessionParams.MODE_FULL_INSTALL,
@@ -269,12 +327,16 @@ class Updater(context: Context) {
                     apk.inputStream().use { it.copyTo(output) }
                     session.fsync(output)
                 }
+                if (!canContinue()) throw InstallDeferred()
                 session.commit(
                     PendingIntent.getBroadcast(
                         app,
-                        0,
+                        sessionId,
                         Intent(app, InstallReceiver::class.java)
-                            .setPackage(app.packageName),
+                            .setAction(UPDATE_RESULT)
+                            .setPackage(app.packageName)
+                            .putExtra(EXTRA_AUTOMATIC, automatic)
+                            .putExtra(EXTRA_VERSION, version),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
                     ).intentSender,
                 )
@@ -292,6 +354,14 @@ class Updater(context: Context) {
         val capabilities = manager?.getNetworkCapabilities(manager.activeNetwork) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
+    internal fun unattendedApprovalRequired(version: String, sessionId: Int) {
+        if (sessionId >= 0) {
+            runCatching { app.packageManager.packageInstaller.abandonSession(sessionId) }
+        }
+        if (VERSION.matches(version)) preferences.edit().putString(BLOCKED_VERSION, version).apply()
+        _state.value = State.Failed(REASON_CONFIRMATION)
     }
 
     fun awaitingApproval(intent: Intent) {
@@ -350,6 +420,13 @@ class Updater(context: Context) {
 
         /** Told apart from a network failure so the UI can offer the way out. */
         const val REASON_PERMISSION = "permission"
+        const val REASON_CONFIRMATION = "confirmation"
+
+        internal const val UPDATE_RESULT = "dev.priyx.pulse.UPDATE_RESULT"
+        internal const val EXTRA_AUTOMATIC = "dev.priyx.pulse.AUTO_UPDATE"
+        internal const val EXTRA_VERSION = "dev.priyx.pulse.UPDATE_VERSION"
+        private const val BLOCKED_VERSION = "confirmation_required_version"
+        private const val RELEASE_CERT = "fe8d601784645cfe5288643bbfedc4dd0254c8891d49768deeebab992dd4e8cd"
 
         /**
          * Compares two dotted versions numerically.

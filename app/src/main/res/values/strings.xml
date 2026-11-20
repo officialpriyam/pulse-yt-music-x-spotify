@@ -292,7 +292,9 @@
     <string name="update_installing">Installing update…</string>
     <string name="update_approval">Confirm the update in Android</string>
     <string name="update_automatic">Automatic app updates</string>
-    <string name="update_automatic_note">Install signed Pulse releases over an unmetered connection when you’re not listening.</string>
+    <string name="update_automatic_note">Install signed releases in the background while your phone is idle and on an unmetered connection.</string>
+    <string name="update_allow_installs">Allow Pulse to install updates</string>
+    <string name="update_manual_confirmation">Android requires approval for this update</string>
     <string name="update_needs_permission">Allow installing — tap</string>
     <string name="update_failed">Not now — tap to retry</string>
     <string name="quality">Audio quality</string>

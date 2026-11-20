@@ -15,9 +15,18 @@ import dev.priyx.pulse.R
 /** Delivers the installer result and surfaces confirmation on devices that require it. */
 class InstallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Updater.UPDATE_RESULT) return
         val updater = (context.applicationContext as PulseApplication).updater
+        val automatic = intent.getBooleanExtra(Updater.EXTRA_AUTOMATIC, false)
         when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -1)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                if (automatic) {
+                    updater.unattendedApprovalRequired(
+                        intent.getStringExtra(Updater.EXTRA_VERSION).orEmpty(),
+                        intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1),
+                    )
+                    return
+                }
                 val confirm = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
                 } else {

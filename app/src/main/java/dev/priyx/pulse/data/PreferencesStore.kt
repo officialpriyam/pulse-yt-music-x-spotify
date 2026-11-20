@@ -456,24 +456,6 @@ class PreferencesStore(context: Context) {
         _automaticUpdates.value = enabled
     }
 
-    fun lastUpdateCheck(): Long = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
-
-    fun setLastUpdateCheck(value: Long) {
-        prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply()
-    }
-
-    /**
-     * The version the user has already been told about and dismissed.
-     *
-     * One version rather than a set: releases only move forward, so a newer one
-     * than the dismissed one is news again, and an older one cannot appear.
-     */
-    fun skippedUpdate(): String? = prefs.getString(KEY_SKIPPED_UPDATE, null)
-
-    fun setSkippedUpdate(value: String) {
-        prefs.edit().putString(KEY_SKIPPED_UPDATE, value).apply()
-    }
-
     /** The account's country code, saved from the Spotify profile. */
     val userCountry: String?
         get() = prefs.getString(KEY_USER_COUNTRY, null)
@@ -516,8 +498,6 @@ class PreferencesStore(context: Context) {
         const val KEY_PROFILE_NAME = "profile_name"
         const val KEY_PROFILE_ART = "profile_art"
         const val KEY_AUTOMATIC_UPDATES = "automatic_updates"
-        const val KEY_LAST_UPDATE_CHECK = "last_update_check"
-        const val KEY_SKIPPED_UPDATE = "skipped_update"
         const val KEY_USER_COUNTRY = "user_country"
     }
 }
