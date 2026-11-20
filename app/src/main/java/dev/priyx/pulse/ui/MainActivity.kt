@@ -10,6 +10,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -105,16 +109,24 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        val playIntro = savedInstanceState == null &&
+            intent?.action == android.content.Intent.ACTION_MAIN &&
+            intent?.hasCategory(android.content.Intent.CATEGORY_LAUNCHER) == true &&
+            android.animation.ValueAnimator.areAnimatorsEnabled()
         setContent {
+            var showIntro by rememberSaveable { mutableStateOf(playIntro) }
             dev.priyx.pulse.ui.theme.ChosenTheme {
-                PulseApp(
-                    player = controller,
-                    onPlay = ::play,
-                    onEnqueue = ::enqueue,
-                    onEnqueueAll = ::enqueueAll,
-                    openPlayer = openPlayer,
-                    link = link,
-                )
+                Box(Modifier.fillMaxSize()) {
+                    PulseApp(
+                        player = controller,
+                        onPlay = ::play,
+                        onEnqueue = ::enqueue,
+                        onEnqueueAll = ::enqueueAll,
+                        openPlayer = openPlayer,
+                        link = link,
+                    )
+                    if (showIntro) PulseIntro { showIntro = false }
+                }
             }
         }
     }

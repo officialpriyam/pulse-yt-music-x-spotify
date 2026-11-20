@@ -311,7 +311,7 @@ function TrackPanel({ track, account, collection, saved, save, add, close }: {
       <button className={`icon-button save ${saved ? "is-saved" : ""}`} aria-label={saved ? "Remove liked track" : "Like track"}
         aria-pressed={saved} onClick={save}><Heart size={22} fill={saved ? "currentColor" : "none"} /></button></div>
     {track.source ? <p className="hint"><a href={track.source} target="_blank" rel="noreferrer">{track.artist}</a> · <a href={audioLicense} target="_blank" rel="noreferrer">CC BY 4.0</a></p>
-      : <a className="quiet-button" href={youtubeTrackUrl(track.id)} target="_blank" rel="noreferrer">Open in YouTube Music</a>}
+      : <a className="quiet-button" href={youtubeTrackUrl(track.id)} target="_blank" rel="noreferrer">Open in YouTube Music <ArrowUpRight size={15} /></a>}
     {account?.signed_in && collection.length > 0 && <form className="track-playlist" onSubmit={addTrack}>
       <select aria-label="Select a playlist" name="playlist" required defaultValue=""><option disabled value="">Select playlist</option>
         {collection.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
@@ -383,12 +383,12 @@ export default function Pulse({ children }: { children: ReactNode }) {
         <Cover src={item.artwork} className={item.id} />
         <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span>
         <Play className="row-play" size={15} fill="currentColor" aria-hidden />
-      </button> : <a className="track-open" href={youtubeTrackUrl(item.id)} target="_blank" rel="noreferrer">
+      </button> : <button className="track-open" onClick={() => setCurrent(item)}>
         <Cover src={item.artwork} />
         <span className="track-text"><strong>{item.title}</strong><small>{item.artist}</small></span>
-        <ArrowUpRight className="row-play" size={16} aria-hidden />
-      </a>}
-      <button className="icon-button" aria-label={`Details for ${item.title}`} onClick={() => setCurrent(item)}><Ellipsis size={19} /></button>
+        <ArrowRight className="row-play" size={16} aria-hidden />
+      </button>}
+      {item.audio && <button className="icon-button" aria-label={`Details for ${item.title}`} onClick={() => setCurrent(item)}><Ellipsis size={19} /></button>}
       <button className={`icon-button ${saved.has(item.id) ? "is-saved" : ""}`} aria-label={`Like ${item.title}`} aria-pressed={saved.has(item.id)}
         disabled={favorites.loading} onClick={() => toggleSave(item)}><Heart size={18} fill={saved.has(item.id) ? "currentColor" : "none"} /></button>
       {remove && <button className="icon-button" aria-label={`Remove ${item.title} from playlist`} onClick={() => remove(item)}><X size={17} /></button>}
@@ -418,9 +418,9 @@ export default function Pulse({ children }: { children: ReactNode }) {
         <section className="section">
           <div className="section-head"><h2>Featured on YouTube Music</h2><Link href="/radio">Browse mixes <ArrowRight size={15} /></Link></div>
           <div className="album-grid">{youtubeHome.slice(0, 4).map((item) =>
-            <a className="album-card" key={item.id} href={youtubeTrackUrl(item.id)} target="_blank" rel="noreferrer">
+            <button className="album-card" key={item.id} onClick={() => setCurrent(item)}>
               <Cover src={item.artwork} /><strong>{item.title}</strong><small>{item.artist}</small>
-            </a>)}</div>
+            </button>)}</div>
         </section>
         <section className="section">{rows(youtubeHome.slice(4))}</section>
         {!!catalog.data?.tracks.length && <section className="section">
