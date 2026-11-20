@@ -2,12 +2,13 @@
 
 The Rust Axum service handles Google OAuth, YouTube search and playlists, and Pulse liked tracks. It runs as a Vercel Function or as a local HTTP server.
 
-## Prepare Google and Postgres
+## Prepare Google, Neon, and Redis
 
-1. Provision a Postgres database, for example Neon through the Vercel Marketplace. Run [schema.sql](schema.sql) in its SQL editor. Use a pooled connection string with TLS for Vercel.
-2. Enable **YouTube Data API v3** in Google Cloud. Configure the OAuth consent screen and add your Google account as a test user while the app is in testing.
-3. Create an OAuth client with type **Web application**. Register `http://localhost:3000/auth/google/callback` for local development and `https://YOUR-WEB-DOMAIN/auth/google/callback` for production. Use the **Next.js site domain**, since the browser talks to the Rust API through the site.
-4. Generate a separate encryption key for each environment. Keep the key stable between deployments so active sessions can still be decrypted.
+1. Provision Neon Postgres and apply the [versioned migrations](#database-migrations). Use a pooled, TLS-protected connection string in the Vercel backend.
+2. Configure Redis with TLS and set `REDIS_URL` to the provider’s `rediss://` URL and TLS port.
+3. Enable **YouTube Data API v3** in Google Cloud. Configure the OAuth consent screen and add your Google account as a test user while the app is in testing.
+4. Create an OAuth client with type **Web application**. Register `http://localhost:3000/auth/google/callback` for local development and `https://YOUR-WEB-DOMAIN/auth/google/callback` for production. Use the **Next.js site domain**, since the browser talks to the Rust API through the site.
+5. Generate a separate encryption key for each environment. Keep the key stable between deployments so active sessions can still be decrypted.
 
 ```sh
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
@@ -22,16 +23,17 @@ Copy [.env.example](.env.example) to `.env` for local development, or edit the l
 | `GOOGLE_CLIENT_ID` | Google web OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Google web OAuth secret |
 | `DATABASE_URL_POOLED` | Neon pooled Postgres connection string. The app prefers this value and accepts `DATABASE_URL` as a fallback. |
+| `REDIS_URL` | Redis URL with `rediss://` and the provider’s TLS port. Loopback `redis://` works for HTTP development. |
 | `PULSE_TOKEN_KEY` | Base64 key that decodes to 32 bytes |
 | `PULSE_PUBLIC_URL` | Web frontend origin, without a path. Locally use `http://localhost:3000`. |
 | `PULSE_BIND` | Local server only. Defaults to `127.0.0.1:4000`. |
 
-Use separate database branches or databases for production and testing. Keep the database URL, Google secret and token key in the Rust project's environment. Postgres is the only storage dependency. The Next.js frontend only needs the backend URL.
+Use separate databases or branches and Redis instances for production and testing. Keep the database URL, Redis URL, Google secret and token key in the Rust project's environment. The Next.js frontend only needs the backend URL.
 
 ## Deploy the backend on Vercel
 
 1. Import the same GitHub repository for both Vercel projects. Create the Rust project rooted at **`backend`**. Choose **Other** as the framework preset and keep build and output overrides empty. The Rust runtime uses [vercel.json](vercel.json), the Cargo manifest and the [function entry point](api/vercel.rs). The backend uses Singapore (`sin1`) to stay near the Neon database.
-2. In the backend project's Environment Variables, add the first five variables above to **Production**. Set `PULSE_PUBLIC_URL` to the Next.js site's production origin. If you use a Preview domain, configure its origin and OAuth callback separately.
+2. In the backend project's Environment Variables, add the first six variables above to **Production**. Set `PULSE_PUBLIC_URL` to the Next.js site's production origin. If you use a Preview domain, configure its origin and OAuth callback separately.
 3. Deploy using Vercel's Git integration, or run `vercel --prod` from the `backend` folder. Open `/healthz` on the deployed backend URL. The JSON should show `"configured":true` and `"status":"ok"`.
 4. Deploy [the web project](../web/README.md) with `PULSE_BACKEND_URL` set to the Rust deployment's origin. Test **Connect Google** from the web site. The Google callback must return to that same site.
 
@@ -48,7 +50,28 @@ cargo run --locked
 curl http://127.0.0.1:4000/healthz
 ```
 
-When the four credential variables are blank, the API starts in guest mode for UI development. Then start Next.js from `web` and open `http://localhost:3000`.
+When the Google, Postgres and Redis settings are blank, the API starts in guest mode for UI development. Then start Next.js from `web` and open `http://localhost:3000`.
+
+## Database migrations
+
+The migration history is stored in `pulse_schema_migrations`. The runner verifies checksums and takes a Postgres transaction-level lock, so simultaneous operators cannot apply a version twice. Apply migrations once per database branch before deploying the backend. A database created with the earlier Pulse schema can apply migration 0001 in place.
+
+From `backend/`, set `DATABASE_URL_DIRECT` to the unpooled Neon connection string using a migration role with schema permissions. This variable belongs in the migration environment. The Vercel runtime uses a separate pooled URL with a role restricted to application queries.
+
+```sh
+cargo run --locked --bin migrate -- apply
+cargo run --locked --bin migrate -- check
+cargo run --locked --bin migrate -- prune
+```
+
+Schedule `prune` as a maintenance job against the same database. Each run removes up to 1,000 expired OAuth states and 1,000 expired sessions. Run it more frequently if expired rows accumulate.
+
+## Capacity and failure behavior
+
+- Neon is the durable store. Redis coordinates request limits and session refreshes across instances. The API returns a temporary failure when Redis is unavailable.
+- Limits default to 6,000 API requests and 180 OAuth requests per minute across the deployment, 120 requests per minute per session, 32 in-flight requests per instance, and two Postgres connections per instance. Tune the `PULSE_*` settings in [.env.example](.env.example) using load measurements and your Neon connection and YouTube API quotas.
+- The API returns `429` with `Retry-After` for rate limits and `503` for local saturation. Apply per-IP rules to public auth routes at Vercel to limit abusive clients before they reach the function. Configure observability for error rates, dependency latency, and rate-limit responses.
+- `/healthz` checks both dependencies and the database version before marking a configured service ready. Exercise your expected traffic against a staging project before committing to a production throughput target.
 
 ## API
 
@@ -70,6 +93,6 @@ Search, playlists and playlist items accept `page_token` from the previous respo
 
 ## Storage and Android
 
-Postgres stores OAuth state, accounts, sessions and saved video IDs. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned when a sign-in starts. The browser holds HTTP-only cookies.
+Postgres stores OAuth state, accounts, sessions and saved video IDs. OAuth state is single use and expires after ten minutes. Sessions expire after eight hours and survive function restarts. Session and OAuth state cookie values are hashed in the database, and provider tokens are encrypted in the Rust service. Expired rows are pruned by the maintenance command. The browser holds HTTP-only cookies.
 
 The Android app currently talks directly to its music providers and needs no backend URL. A future Android integration would need a configurable API origin and a mobile login flow if you want to share Pulse liked tracks with the web app. The web integration uses public YouTube APIs for browsing and library management.

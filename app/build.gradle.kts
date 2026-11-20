@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -47,7 +46,9 @@ require(spicyLyricsOrigin.isEmpty() || spicyLyricsOrigin.matches(Regex("https://
 
 android {
     namespace = "dev.priyx.pulse"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
     ndkVersion = ndkVersionForCargo
 
     defaultConfig {
@@ -161,12 +162,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        }
     }
 
     buildFeatures {
@@ -353,7 +348,7 @@ val cargoBuild by tasks.registering(Exec::class) {
     // Everything is resolved here rather than in a doFirst block: a task action
     // closure would capture the build script instance, which the configuration
     // cache refuses to serialize.
-    val ndkDir = File(android.sdkDirectory, "ndk/$ndkVersionForCargo")
+    val ndkDir = File(androidComponents.sdkComponents.sdkDirectory.get().asFile, "ndk/$ndkVersionForCargo")
     val unmappedAbis = nativeAbis.filterNot { rustTargets.containsKey(it) }
     require(unmappedAbis.isEmpty()) { "No Rust target mapped for ABI(s): $unmappedAbis" }
     require(ndkDir.isDirectory) {

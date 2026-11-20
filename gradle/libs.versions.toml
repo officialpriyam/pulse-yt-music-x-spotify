@@ -1,5 +1,5 @@
 [versions]
-agp = "8.13.2"
+agp = "9.1.1"
 kotlin = "2.3.21"
 composeBom = "2026.06.01"
 media3 = "1.11.1"
@@ -87,6 +87,5 @@ phosphor = { module = "com.adamglin:phosphor-icon", version = "1.0.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

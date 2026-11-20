@@ -1,12 +1,13 @@
 plugins {
     id("com.android.library")
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "com.metrolist.innertube"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
 
     defaultConfig {
         minSdk = 26

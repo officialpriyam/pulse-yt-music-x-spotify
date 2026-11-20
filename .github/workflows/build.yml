@@ -27,7 +27,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Build
-        run: ./gradlew :app:testDevUnitTest :app:assembleDev --stacktrace
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDev --stacktrace
 
       - uses: actions/upload-artifact@v7
         with:
