@@ -408,6 +408,7 @@ export default function Pulse({ children }: { children: ReactNode }) {
         <Link className="brand compact-brand" href="/" aria-label="Pulse home"><img src="/pulse.png" alt="" /><span>Pulse</span></Link>
         <Link className="search-shortcut glass" href="/search" aria-label="Search music"><Search size={17} /><span>Search music</span></Link>
         <div className="top-actions">
+          <Link className="icon-button glass mobile-settings" aria-label="Settings" href="/settings"><Settings2 size={18} /></Link>
           <Link className="icon-button glass" aria-label="Spotify player" href="/player"><Headphones size={18} /></Link>
           <Link className="account-button glass" aria-label={authenticated ? "Account settings" : "Sign in"} href={authenticated ? "/settings" : "/login"}>
             {authenticated ? <span className="avatar">{(account.name || "P").charAt(0).toUpperCase()}</span> : <LogIn size={17} />}

@@ -21,6 +21,8 @@ app/.cxx/
 # Signing. The keystore and its passwords never go near the repository.
 *.jks
 *.keystore
+*.p12
+*.pfx
 keystore.properties
 
 # IDE

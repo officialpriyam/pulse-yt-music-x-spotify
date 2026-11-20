@@ -282,6 +282,7 @@ h2 { font-size: clamp(1.2rem,2.45vw,1.55rem); font-weight: 710; letter-spacing: 
 .primary { color: #232818; }
 .top-actions { display: flex; margin-left: auto; align-items: center; gap: 7px; min-width: 0; }
 .top-actions > a { flex-shrink: 0; }
+.top-actions .mobile-settings { display: none; }
 .top-actions .account-button { flex-shrink: 1; }
 .avatar { flex: 0 0 auto; line-height: 1; }
 .section-head > a { font-size: 13px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; text-decoration: none; }
@@ -361,6 +362,7 @@ details summary { cursor: pointer; color: var(--accent); }
   .app-shell { grid-template-columns: minmax(0,1fr); }
   .app-shell.with-panel { grid-template-columns: minmax(0,1fr) 242px; }
   .mobile-nav { padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+  .top-actions .mobile-settings { display: inline-grid; }
   .mobile-nav .nav-link { margin: 0; flex: 1; display: grid; justify-items: center; text-align: center; gap: 2px; padding: 5px; font-size: 12px; }
 }
 @media (max-width: 690px) {
